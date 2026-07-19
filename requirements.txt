@@ -1,9 +1,56 @@
-fastapi>=0.115.0
-uvicorn>=0.32.0
-SQLAlchemy>=2.0.36
-pydantic>=2.10.0
-pydantic-settings>=2.6.0
-python-dotenv>=1.0.1
+def _diff_leaf(path, ado_val, k8s_val, out):
+    if ado_val != k8s_val:
+        out.append({"path": path, "ado": ado_val, "k8s": k8s_val})
 
-# Optional: only needed if you switch DATABASE_URL to Postgres
-# psycopg[binary]>=3.2
+def _diff_resources_block(path, ado_res, k8s_res, out):
+    _diff_leaf(f"{path}.requests", ado_res.get("requests", {}), k8s_res.get("requests", {}), out)
+    _diff_leaf(f"{path}.limits", ado_res.get("limits", {}), k8s_res.get("limits", {}), out)
+
+def _diff_containers(path, ado_containers, k8s_containers, out):
+    ado_by_name = {c["name"]: c for c in ado_containers}
+    k8s_by_name = {c["name"]: c for c in k8s_containers}
+    for name in sorted(set(ado_by_name) | set(k8s_by_name)):
+        a, k = ado_by_name.get(name), k8s_by_name.get(name)
+        cpath = f"{path}.containers[{name}]"
+        if a is None:
+            out.append({"path": cpath, "ado": "MISSING_IN_ADO", "k8s": k}); continue
+        if k is None:
+            out.append({"path": cpath, "ado": a, "k8s": "MISSING_IN_K8S"}); continue
+        # image intentionally excluded — pipeline-injected digest, never matches a local render
+        _diff_resources_block(f"{cpath}.resources", a.get("resources", {}), k.get("resources", {}), out)
+
+def _diff_deployments(ado_list, k8s_list):
+    out = []
+    ado_by_name = {d["name"]: d for d in ado_list}
+    k8s_by_name = {d["name"]: d for d in k8s_list}
+    for name in sorted(set(ado_by_name) | set(k8s_by_name)):
+        a, k = ado_by_name.get(name), k8s_by_name.get(name)
+        path = f"deployment[{name}]"
+        if a is None:
+            out.append({"path": path, "ado": "MISSING_IN_ADO", "k8s": k}); continue
+        if k is None:
+            out.append({"path": path, "ado": a, "k8s": "MISSING_IN_K8S"}); continue
+        _diff_leaf(f"{path}.replicas", a.get("replicas"), k.get("replicas"), out)
+        _diff_containers(path, a.get("containers", []), k.get("containers", []), out)
+    return out
+
+def _diff_configmaps(ado_list, k8s_list):
+    out = []
+    ado_by_name = {c["name"]: c for c in ado_list}
+    k8s_by_name = {c["name"]: c for c in k8s_list}
+    for name in sorted(set(ado_by_name) | set(k8s_by_name)):
+        a, k = ado_by_name.get(name), k8s_by_name.get(name)
+        path = f"configmap[{name}]"
+        if a is None:
+            out.append({"path": path, "ado": "MISSING_IN_ADO", "k8s": k}); continue
+        if k is None:
+            out.append({"path": path, "ado": a, "k8s": "MISSING_IN_K8S"}); continue
+        a_data, k_data = a.get("data", {}), k.get("data", {})
+        for key in sorted(set(a_data) | set(k_data)):
+            _diff_leaf(f"{path}.data[{key}]", a_data.get(key), k_data.get(key), out)
+    return out
+
+def diff_resources(ado_resources: dict, k8s_resources: dict) -> dict:
+    diffs = (_diff_deployments(ado_resources.get("deployments", []), k8s_resources.get("deployments", []))
+             + _diff_configmaps(ado_resources.get("configmaps", []), k8s_resources.get("configmaps", [])))
+    return {"drifted": len(diffs) > 0, "drift_count": len(diffs), "differences": diffs}
