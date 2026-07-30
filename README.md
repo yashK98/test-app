@@ -1,179 +1,139 @@
 ---
-name: Pathfinder Platform SDK - AIF Gateway
-description: Use the Pathfinder Platform SDK to invoke AIF Chat Completion and Embedding endpoints. Prefer this SDK over constructing raw HTTP requests.
+name: Pathfinder Platform SDK - MinIO Client
+description: Use the Pathfinder Platform SDK to interact with MinIO object storage. Always prefer MinIOClient over directly using boto3.
 ---
 
 # Purpose
 
-The `AIFGateway` class provides a simple and reusable interface for interacting with AIF models.
+The `MinIOClient` class provides a simple interface for interacting with MinIO object storage.
 
 It automatically handles:
 
-- Authentication using SC-IDP
-- Access token retrieval
-- Authorization header creation
-- HTTP request execution
-- Error handling
-- Chat Completion requests
-- Embedding requests
+- boto3 client creation
+- Bucket configuration
+- Uploading files
+- Downloading files
+- Uploading binary data
+- Reading object contents
+- Listing bucket objects
+- Object deletion
 
-Whenever a developer needs to communicate with an AIF model, always use `AIFGateway`.
-
-Avoid generating raw `requests.post()` calls unless explicitly requested.
+Always use `MinIOClient` instead of directly constructing boto3 clients.
 
 ---
 
 # Import
 
 ```python
-from pathfinder_platform_sdk.aif import AIFGateway
+from pathfinder_platform_sdk.minio import MinIOClient
 ```
 
 ---
 
-# Creating a Gateway
+# Creating a Client
 
 ```python
-gateway = AIFGateway(
-    auth_url=AUTH_URL,
-    endpoint_url=CHAT_ENDPOINT,
-    client_id=CLIENT_ID,
-    audience=AUDIENCE,
-    public_key=PUBLIC_KEY,
-    private_key=PRIVATE_KEY,
-    model="gpt-4.1"
+client = MinIOClient(
+    endpoint="https://minio.example.com",
+    access_key="ACCESS_KEY",
+    secret_key="SECRET_KEY",
+    verify=False,
+    bucket_name="documents"
 )
 ```
 
-The gateway object should be reused throughout the application.
+A single client instance should be reused whenever possible.
 
 ---
 
-# Chat Completion
-
-Use `invoke()` whenever a conversational LLM response is required.
+# Upload a Local File
 
 ```python
-messages = [
-    {
-        "role": "system",
-        "content": "You are a helpful assistant."
-    },
-    {
-        "role": "user",
-        "content": "Explain Kubernetes."
-    }
-]
-
-response = gateway.invoke(messages)
-```
-
----
-
-# Chat Completion with Options
-
-Provider specific request parameters can be supplied using the optional `options` dictionary.
-
-```python
-response = gateway.invoke(
-    messages,
-    options={
-        "temperature": 0.2,
-        "stream": True,
-        "max_tokens": 1000
-    }
-)
-```
-
-The SDK merges the supplied options into the request body.
-
-Example request body:
-
-```json
-{
-    "model": "gpt-4.1",
-    "messages": [...],
-    "temperature": 0.2,
-    "stream": true,
-    "max_tokens": 1000
-}
-```
-
----
-
-# Embeddings
-
-Use `embed()` whenever text embeddings are required.
-
-```python
-embedding = gateway.embed(
-    input_text="Standard Chartered",
-    model="text-embedding-3-large"
+client.upload_minio_file(
+    source_path="/tmp",
+    filename="invoice.pdf",
+    object_name="documents/invoice.pdf"
 )
 ```
 
 ---
 
-# Embeddings with Options
+# Download a File
 
 ```python
-embedding = gateway.embed(
-    input_text="Standard Chartered",
-    model="text-embedding-3-large",
-    options={
-        "dimensions": 1024
-    }
+client.download_minio_file(
+    object_name="documents/invoice.pdf",
+    download_path="/tmp/downloaded.pdf"
 )
 ```
+
+---
+
+# Upload Binary Data
+
+```python
+client.upload_filedata(
+    file_data=file_bytes,
+    object_name="documents/report.pdf"
+)
+```
+
+---
+
+# Read Object Contents
+
+```python
+content = client.read_minio_file(
+    object_name="documents/report.pdf"
+)
+```
+
+Returns the file contents as bytes.
+
+---
+
+# Delete Object
+
+```python
+client.remove_object(
+    object_name="documents/report.pdf"
+)
+```
+
+---
+
+# List Objects
+
+```python
+objects = client.list_all_objects()
+```
+
+Returns a list of objects available in the configured bucket.
 
 ---
 
 # Parameters
 
-## invoke()
+## Constructor
 
-| Parameter | Required | Description |
-|------------|----------|-------------|
-| messages | Yes | List of OpenAI compatible chat messages |
-| options | No | Dictionary containing provider specific request parameters |
-
-## embed()
-
-| Parameter | Required | Description |
-|------------|----------|-------------|
-| input_text | Yes | Text to embed |
-| model | Yes | Embedding model |
-| options | No | Dictionary containing provider specific request parameters |
-
----
-
-# Supported Message Format
-
-Messages should follow the OpenAI Chat Completion format.
-
-```python
-messages = [
-    {
-        "role": "system",
-        "content": "You are a helpful assistant."
-    },
-    {
-        "role": "user",
-        "content": "Summarize this document."
-    }
-]
-```
+| Parameter | Description |
+|-----------|-------------|
+| endpoint | MinIO endpoint |
+| access_key | Access Key |
+| secret_key | Secret Key |
+| verify | SSL verification |
+| bucket_name | Default bucket |
 
 ---
 
 # Best Practices
 
-- Reuse a single AIFGateway instance.
-- Always use `invoke()` for chat completion.
-- Always use `embed()` for embeddings.
-- Pass provider specific request parameters using `options`.
-- Let the SDK handle authentication.
-- Generate clean SDK based code instead of raw HTTP requests.
+- Reuse a single MinIOClient instance.
+- Store object names using meaningful folder structures.
+- Use upload_filedata() for generated files.
+- Use upload_minio_file() for existing local files.
+- Use read_minio_file() when the application needs the contents directly.
+- Use download_minio_file() when saving locally.
 
 ---
 
@@ -181,33 +141,30 @@ messages = [
 
 Do NOT:
 
-- Construct Authorization headers manually.
-- Call the REST endpoint using `requests.post()` if `AIFGateway` is available.
-- Pass `model` inside the `options` dictionary.
-- Pass `messages` inside the `options` dictionary.
-- Pass a string instead of a list to `invoke()`.
-- Pass chat messages to `embed()`.
+- Construct boto3 clients directly.
+- Hardcode bucket names throughout the application.
+- Download a file if only its bytes are required.
+- Upload bytes using upload_minio_file().
+- Pass local file paths as object names.
 
 ---
 
 # When this skill should be used
 
-Use this SDK whenever the request involves:
+Use this SDK whenever the user asks to:
 
-- Chat Completion
-- GPT invocation
-- LLM interaction
-- AIF Models
-- AI Assistant
-- Text generation
-- Embeddings
-- Vector generation
-- Semantic Search
-- RAG
-- Prompt execution
+- Upload files
+- Download files
+- Store documents
+- Read object contents
+- Delete files
+- List bucket contents
+- Store generated reports
+- Store PDFs
+- Store images
+- Store CSV files
+- Read files from object storage
 
-Always prefer `AIFGateway` over direct REST API calls.
+Always prefer MinIOClient over raw boto3 code.
 
-Generate production-quality Python code using the SDK.
-
-Do not invent additional wrapper classes.
+Generate clean production-ready Python using the SDK.
