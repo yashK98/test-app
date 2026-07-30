@@ -1,200 +1,156 @@
 """
-AutoRemediationService
-=======================
-Given a list of differences (as produced by the drift-diff step comparing
-ADO chart values against live Kubernetes state), this patches the correct
-values-<environment>.yaml keys to match the live cluster, commits the change
-on a new branch, pushes it, and opens an Azure DevOps pull request.
+Examples demonstrating usage of Pathfinder Platform SDK AIFGateway.
 
-Design notes (learned the hard way while building this):
-
-1. Not every diff can be remediated automatically. A diff's "path" only maps
-   to a real values-file key if that field is actually sourced FROM the
-   values file in the chart template — anything hardcoded directly in a
-   template (e.g. a ConfigMap's `hive.timeout: 14400`, or `scidp.base_url`)
-   has no values-file key to patch, and must be left alone. Every diff whose
-   path doesn't match a known mapping is reported in `skipped`, never
-   guessed at or force-applied.
-
-2. Different charts use different conventions for how a nested config field
-   maps to a values key. `heracles-extract-service`'s ConfigMap flattens
-   nested fields with underscores (`datasource.port` -> `datasource_port`),
-   while `pathfinder-auth-service`'s keeps the same nested dotted path the
-   values file itself uses (`entra.tenant_id` -> `entra.tenant_id`). Neither
-   convention is guessable from the other, so each chart gets its own entry
-   in CONFIGMAP_VALUE_MAPS rather than one "clever" universal rule.
-
-3. Writing a value back with ruamel.yaml may ADD quotes around it (e.g.
-   `cpu: 1` -> `cpu: '2'`) even if the original file had it unquoted. This
-   is intentional and harmless — Kubernetes resource quantities are always
-   strings on the API side, so keeping the written value quoted avoids the
-   int/string type-mismatch false-drift bug hit earlier in this project.
-   It does mean a PR diff may show quotes appearing where there weren't any
-   before, even though only the underlying value actually changed.
+These examples are intentionally simple so that GitHub Copilot can
+learn the preferred usage patterns.
 """
 
-import base64
-import json
-import logging
-import time
-from pathlib import Path
+from pathfinder_platform_sdk.aif import AIFGateway
 
-import requests
-from git import Actor, Repo
-from git.exc import GitCommandError
-from ruamel.yaml import YAML
+###########################################################################
+# Create Gateway
+###########################################################################
 
-logger = logging.getLogger(__name__)
+gateway = AIFGateway(
+    auth_url="AUTH_URL",
+    endpoint_url="CHAT_ENDPOINT",
+    client_id="CLIENT_ID",
+    audience="AUDIENCE",
+    public_key="PUBLIC_KEY",
+    private_key="PRIVATE_KEY",
+    model="gpt-4.1"
+)
 
-yaml_rw = YAML()
-yaml_rw.preserve_quotes = True
+###########################################################################
+# Example 1 - Basic Chat Completion
+###########################################################################
 
-
-# ---------------------------------------------------------------------------
-# Value-path mapping: diff path suffix -> dotted key in values-<env>.yaml
-# ---------------------------------------------------------------------------
-
-# Applies to every chart — deployment-level fields are structured the same
-# way everywhere (replica count, resource requests/limits).
-BASE_VALUE_PATH_MAP = {
-    "resources.requests": "resources.requests",
-    "resources.limits": "resources.limits",
-    "replicas": "replicas",
-}
-
-# Per-chart ConfigMap field mappings. Each chart's embedded application.yaml
-# has its own shape and its own values-key convention — confirm these against
-# the actual template/values files for any new chart before trusting them.
-CONFIGMAP_VALUE_MAPS = {
-    "heracles-extract-service": {
-        "data[application.yaml].datasource.host": "datasource_host",
-        "data[application.yaml].datasource.port": "datasource_port",
-        "data[application.yaml].datasource.user": "datasource_user",
-        "data[application.yaml].datasource.database": "datasource_database",
-        "data[application.yaml].minio.endpoint": "minio_endpoint",
-        "data[application.yaml].minio.ca_bundle": "minio_ca_bundle",
-        "data[application.yaml].minio.bucket": "minio_bucket",
-        "data[application.yaml].kerberos.keytab_path": "kerberos_keytab_path",
-        "data[application.yaml].kerberos.krb5_ccname": "kerberos_krb5_ccname",
-        "data[application.yaml].kerberos.username": "kerberos_username",
-        "data[application.yaml].hive.driver_path": "hive_driver_path",
-        "data[application.yaml].hive.url": "hive_url",
-        "data[application.yaml].hive.principal": "hive_principal",
-        "data[application.yaml].hive.truststore": "hive_truststore",
-        # hive.timeout, app.*, datamigration.* intentionally absent —
-        # hardcoded in the template, not sourced from values.
+messages = [
+    {
+        "role": "system",
+        "content": "You are a helpful assistant."
     },
-    "pathfinder-auth-service": {
-        "data[application.yaml].keycloak.entra.base_url": "entra.base_url",
-        "data[application.yaml].keycloak.entra.tenant_id": "entra.tenant_id",
-        # scidp.*, keycloak.base_url intentionally absent — hardcoded.
+    {
+        "role": "user",
+        "content": "Explain Kubernetes in simple terms."
+    }
+]
+
+response = gateway.invoke(messages)
+
+print(response)
+
+###########################################################################
+# Example 2 - Chat Completion with Provider Options
+###########################################################################
+
+messages = [
+    {
+        "role": "user",
+        "content": "Write a Python function to reverse a string."
+    }
+]
+
+response = gateway.invoke(
+    messages,
+    options={
+        "temperature": 0.3,
+        "max_tokens": 500
+    }
+)
+
+print(response)
+
+###########################################################################
+# Example 3 - Streaming Response
+###########################################################################
+
+messages = [
+    {
+        "role": "user",
+        "content": "Generate a detailed project plan."
+    }
+]
+
+response = gateway.invoke(
+    messages,
+    options={
+        "stream": True
+    }
+)
+
+print(response)
+
+###########################################################################
+# Example 4 - Embedding Generation
+###########################################################################
+
+embedding = gateway.embed(
+    input_text="Standard Chartered Bank",
+    model="text-embedding-3-large"
+)
+
+print(embedding)
+
+###########################################################################
+# Example 5 - Embedding with Options
+###########################################################################
+
+embedding = gateway.embed(
+    input_text="Artificial Intelligence",
+    model="text-embedding-3-large",
+    options={
+        "dimensions": 1024
+    }
+)
+
+print(embedding)
+
+###########################################################################
+# Example 6 - Multi-turn Conversation
+###########################################################################
+
+messages = [
+    {
+        "role": "system",
+        "content": "You are an experienced software architect."
     },
-}
+    {
+        "role": "user",
+        "content": "What is Kubernetes?"
+    },
+    {
+        "role": "assistant",
+        "content": "Kubernetes is a container orchestration platform."
+    },
+    {
+        "role": "user",
+        "content": "How is it different from Docker?"
+    }
+]
 
+response = gateway.invoke(messages)
 
-def _value_map_for(repo_name: str) -> dict:
-    return {**BASE_VALUE_PATH_MAP, **CONFIGMAP_VALUE_MAPS.get(repo_name, {})}
+print(response)
 
+###########################################################################
+# Example 7 - Using Multiple Provider Parameters
+###########################################################################
 
-def _match_value_path(diff_path: str, value_map: dict):
-    for suffix, values_path in value_map.items():
-        if diff_path.endswith(suffix):
-            return values_path
-    return None
+messages = [
+    {
+        "role": "user",
+        "content": "Explain Retrieval Augmented Generation."
+    }
+]
 
+response = gateway.invoke(
+    messages,
+    options={
+        "temperature": 0.2,
+        "max_tokens": 800,
+        "stream": False
+    }
+)
 
-def _set_by_path(node, dotted_path: str, value):
-    keys = dotted_path.split(".")
-    for k in keys[:-1]:
-        if k not in node or not isinstance(node[k], dict):
-            node[k] = {}
-        node = node[k]
-    node[keys[-1]] = value
-
-
-class AutoRemediationService:
-    def __init__(self, workspace: str, pat_token: str, ado_org_url: str, ado_project: str):
-        self.workspace = workspace
-        self.pat_token = pat_token
-        self.ado_org_url = ado_org_url
-        self.ado_project = ado_project
-
-    def remediate(self, repo_name: str, environment: str, differences: list[dict],
-                  base_branch: str = "main", target_branch: str | None = None) -> dict:
-        """
-        repo_name:     e.g. "heracles-extract-service" — must match the
-                       already-cloned folder name under self.workspace.
-        environment:   selects charts/<repo_name>/values/values-<environment>.yaml
-        differences:   the `differences` list from your /diff-service response.
-        base_branch:   the branch reflecting current ADO state (the one you
-                       diffed against) — the remediation branch is created
-                       FROM this, after pulling it fresh.
-        target_branch: where the PR should merge into. Defaults to
-                       base_branch if not given.
-        """
-        target_branch = target_branch or base_branch
-        path = Path(f"{self.workspace}\\{repo_name}")
-        values_file = path / "charts" / repo_name / "values" / f"values-{environment}.yaml"
-
-        value_map = _value_map_for(repo_name)
-        with open(values_file) as f:
-            data = yaml_rw.load(f)
-
-        applied, skipped = [], []
-        for diff in differences:
-            values_path = _match_value_path(diff["path"], value_map)
-            if values_path is None:
-                skipped.append(diff["path"])
-                continue
-            _set_by_path(data, values_path, diff["k8s"])
-            applied.append(diff["path"])
-
-        if not applied:
-            return {"pr_url": None, "applied": [], "skipped": skipped,
-                    "message": "No differences had a known values-file mapping; nothing to remediate."}
-
-        branch = f"drift-remediation/{repo_name}-{environment}-{int(time.time())}"
-
-        try:
-            handle = Repo(str(path))
-            handle.git.checkout(base_branch)
-            handle.git.pull("origin", base_branch)
-            handle.git.checkout("-b", branch)
-
-            with open(values_file, "w") as f:
-                yaml_rw.dump(data, f)
-
-            rel = values_file.relative_to(path)
-            handle.index.add([str(rel)])
-            author = Actor("drift-detector", "drift-detector@example.com")
-            handle.index.commit(f"chore(drift): remediate {repo_name} ({environment})",
-                                author=author, committer=author)
-            handle.remote().push(refspec=f"{branch}:{branch}")
-        except GitCommandError as ex:
-            logger.exception(f"Git operation failed while remediating {repo_name}: {ex}")
-            raise
-
-        pr_url = self._create_pull_request(repo_name, branch, target_branch, applied)
-        return {"pr_url": pr_url, "applied": applied, "skipped": skipped}
-
-    def _create_pull_request(self, repo_name: str, source_branch: str,
-                             target_branch: str, applied: list[str]) -> str:
-        token = base64.b64encode(f":{self.pat_token}".encode()).decode()
-        headers = {"Authorization": f"Basic {token}", "Content-Type": "application/json"}
-        url = (f"{self.ado_org_url}/{self.ado_project}/_apis/git/"
-               f"repositories/{repo_name}/pullrequests?api-version=7.0")
-        body = {
-            "sourceRefName": f"refs/heads/{source_branch}",
-            "targetRefName": f"refs/heads/{target_branch}",
-            "title": f"Drift remediation: {repo_name}",
-            "description": ("Auto-generated by drift-detector.\n\nUpdates:\n"
-                            + "\n".join(f"- {p}" for p in applied)),
-        }
-        try:
-            resp = requests.post(url, headers=headers, data=json.dumps(body))
-            resp.raise_for_status()
-        except requests.exceptions.RequestException as ex:
-            logger.exception(f"Failed to raise PR for {repo_name}: {ex}")
-            raise
-        pr = resp.json()
-        return f"{self.ado_org_url}/{self.ado_project}/_git/{repo_name}/pullrequest/{pr['pullRequestId']}"
+print(response)
