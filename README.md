@@ -1,101 +1,213 @@
+---
+name: Pathfinder Platform SDK - AIF Gateway
+description: Use the Pathfinder Platform SDK to invoke AIF Chat Completion and Embedding endpoints. Prefer this SDK over constructing raw HTTP requests.
+---
 
+# Purpose
 
+The `AIFGateway` class provides a simple and reusable interface for interacting with AIF models.
 
+It automatically handles:
 
-You are a Kubernetes/DevOps assistant that writes clear, factual drift-remediation reports for engineers reviewing a pull request. You will be given structured JSON describing differences between what is defined in an Azure DevOps Helm chart (the ado side) and what is actually running live in a Kubernetes cluster (the k8s side), for one service.
+- Authentication using SC-IDP
+- Access token retrieval
+- Authorization header creation
+- HTTP request execution
+- Error handling
+- Chat Completion requests
+- Embedding requests
 
-Rules:
-- Base every statement Here is the drift data for this service. Write the report per your instructions.
+Whenever a developer needs to communicate with an AIF model, always use `AIFGateway`.
 
-{
-  "service": "<repo_name>",
-  "environment": "<environment>",
-  "differences": <the full differences list from your diff result>,
-  "applied_paths": <the applied list from remediate()>,
-  "skipped_paths": <the skipped list from remediate()>
-}
+Avoid generating raw `requests.post()` calls unless explicitly requested.
 
+---
 
-STRICTLY on the JSON provided. Never invent values, causes, history, or context that is not in the data.
-- If you do not know WHY a value changed (you never do -- you only see before/after), say so plainly rather than guessing at a root cause.
-- Distinguish fields that WILL be corrected by this PR (in applied) from fields that were detected as different but could NOT be automatically fixed (in skipped) and need manual attention.
-- Flag anything operationally risky (e.g. a large replica count change, a large resource limit change) as worth double-checking before merge -- but do not block or recommend against merging; you are informational only.
-- Keep it concise: a reviewer should be able to read this in under 30 seconds.
+# Import
 
-Output using exactly this structure, in plain text (no markdown headers -- this goes into a PR description field):
-
-Summary: <1-2 sentence plain-English overview of what drifted>
-
-Changes in this PR:
-<one line per applied change, format: - <field>: <ado value> -> <k8s value>>
-
-Needs manual review (not included in this PR):
-<one line per skipped change, or None if the skipped list is empty>
-
-Notes: <any risk flags from the rule above, or None if nothing stands out>
-
-
-
-# Drift Detector — Backend
-
-FastAPI backend (Python 3.10+). Phase 1: repository CRUD + reading namespace
-resources from the cluster via your existing `skectl` / `kubectl` binaries.
-
-## Run
-
-```bash
-python -m venv .venv
-# Windows:  .venv\Scripts\activate
-# macOS/Linux:  source .venv/bin/activate
-pip install -r requirements.txt
-cp .env.example .env          # Windows: copy .env.example .env
-uvicorn app.main:app --reload --port 8000
+```python
+from pathfinder_platform_sdk.aif import AIFGateway
 ```
 
-Interactive docs at http://localhost:8000/docs. Uses a local SQLite file by
-default — no database server required.
+---
 
-## Endpoints
+# Creating a Gateway
 
-**Repositories**
+```python
+gateway = AIFGateway(
+    auth_url=AUTH_URL,
+    endpoint_url=CHAT_ENDPOINT,
+    client_id=CLIENT_ID,
+    audience=AUDIENCE,
+    public_key=PUBLIC_KEY,
+    private_key=PRIVATE_KEY,
+    model="gpt-4.1"
+)
+```
 
-| Method | Path                      | Purpose            |
-|--------|---------------------------|--------------------|
-| GET    | `/api/repositories`       | list               |
-| POST   | `/api/repositories`       | add                |
-| GET    | `/api/repositories/{id}`  | get one            |
-| DELETE | `/api/repositories/{id}`  | remove             |
+The gateway object should be reused throughout the application.
 
-**Cluster**
+---
 
-| Method | Path                                          | Purpose                        |
-|--------|-----------------------------------------------|--------------------------------|
-| POST   | `/api/cluster/auth`                           | run skectl to get/refresh token|
-| GET    | `/api/cluster/{namespace}/resources`          | all five kinds at once         |
-| GET    | `/api/cluster/{namespace}/resource/{kind}`    | one kind                       |
+# Chat Completion
 
-`kind` is one of: `configmap`, `deployment`, `secret`, `service`, `ingress`.
-Secret values are redacted by default; add `?reveal_secrets=true` to include them.
+Use `invoke()` whenever a conversational LLM response is required.
 
-## How cluster auth works
+```python
+messages = [
+    {
+        "role": "system",
+        "content": "You are a helpful assistant."
+    },
+    {
+        "role": "user",
+        "content": "Explain Kubernetes."
+    }
+]
 
-The backend runs the same binaries you use by hand. Because setups differ in how
-`skectl` hands its token to `kubectl`, the behaviour is configured in `.env`:
+response = gateway.invoke(messages)
+```
 
-- **kubeconfig mode (default, `SKECTL_TOKEN_MODE=false`)** — running `skectl`
-  updates your kubeconfig, so plain `kubectl` calls are authenticated afterwards.
-  Either leave `SKECTL_CMD` blank and authenticate yourself in a terminal first,
-  or set `SKECTL_CMD` so the backend refreshes via `POST /api/cluster/auth`.
-- **token mode (`SKECTL_TOKEN_MODE=true`)** — `SKECTL_CMD` prints a bearer token
-  on stdout; the backend caches it (`TOKEN_TTL`) and passes it to kubectl with
-  `--token`.
+---
 
-If `skectl` needs interactive SSO (browser/password), run it in your terminal
-first and keep `SKECTL_CMD` blank — the backend then just uses the live session.
+# Chat Completion with Options
 
-On Windows, if `kubectl`/`skectl` aren't resolved from PATH, set `KUBECTL_BIN`
-(and `SKECTL_BIN`) to the full `.exe` path.
+Provider specific request parameters can be supplied using the optional `options` dictionary.
 
-## Next phases (not built yet)
+```python
+response = gateway.invoke(
+    messages,
+    options={
+        "temperature": 0.2,
+        "stream": True,
+        "max_tokens": 1000
+    }
+)
+```
 
-Helm-render + field-level drift compare, and the remediation PR to Azure DevOps.
+The SDK merges the supplied options into the request body.
+
+Example request body:
+
+```json
+{
+    "model": "gpt-4.1",
+    "messages": [...],
+    "temperature": 0.2,
+    "stream": true,
+    "max_tokens": 1000
+}
+```
+
+---
+
+# Embeddings
+
+Use `embed()` whenever text embeddings are required.
+
+```python
+embedding = gateway.embed(
+    input_text="Standard Chartered",
+    model="text-embedding-3-large"
+)
+```
+
+---
+
+# Embeddings with Options
+
+```python
+embedding = gateway.embed(
+    input_text="Standard Chartered",
+    model="text-embedding-3-large",
+    options={
+        "dimensions": 1024
+    }
+)
+```
+
+---
+
+# Parameters
+
+## invoke()
+
+| Parameter | Required | Description |
+|------------|----------|-------------|
+| messages | Yes | List of OpenAI compatible chat messages |
+| options | No | Dictionary containing provider specific request parameters |
+
+## embed()
+
+| Parameter | Required | Description |
+|------------|----------|-------------|
+| input_text | Yes | Text to embed |
+| model | Yes | Embedding model |
+| options | No | Dictionary containing provider specific request parameters |
+
+---
+
+# Supported Message Format
+
+Messages should follow the OpenAI Chat Completion format.
+
+```python
+messages = [
+    {
+        "role": "system",
+        "content": "You are a helpful assistant."
+    },
+    {
+        "role": "user",
+        "content": "Summarize this document."
+    }
+]
+```
+
+---
+
+# Best Practices
+
+- Reuse a single AIFGateway instance.
+- Always use `invoke()` for chat completion.
+- Always use `embed()` for embeddings.
+- Pass provider specific request parameters using `options`.
+- Let the SDK handle authentication.
+- Generate clean SDK based code instead of raw HTTP requests.
+
+---
+
+# Common Mistakes
+
+Do NOT:
+
+- Construct Authorization headers manually.
+- Call the REST endpoint using `requests.post()` if `AIFGateway` is available.
+- Pass `model` inside the `options` dictionary.
+- Pass `messages` inside the `options` dictionary.
+- Pass a string instead of a list to `invoke()`.
+- Pass chat messages to `embed()`.
+
+---
+
+# When this skill should be used
+
+Use this SDK whenever the request involves:
+
+- Chat Completion
+- GPT invocation
+- LLM interaction
+- AIF Models
+- AI Assistant
+- Text generation
+- Embeddings
+- Vector generation
+- Semantic Search
+- RAG
+- Prompt execution
+
+Always prefer `AIFGateway` over direct REST API calls.
+
+Generate production-quality Python code using the SDK.
+
+Do not invent additional wrapper classes.
