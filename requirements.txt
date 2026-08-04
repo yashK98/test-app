@@ -1,58 +1,90 @@
-import json
 import logging
+import shutil
+import time
+from pathlib import Path
 
-from app.src.models.ValidationResponse import ValidationResponse
-from app.src.prompts.ValidationPrompt import ValidationPrompt
-from app.src.service.DocumentService import DocumentService
-from app.src.service.LLMService import LLMService
-from app.src.service.PolicyService import PolicyService
+from app.src.config.Config import settings
+from app.src.service.AgentService import AgentService
 
 logger = logging.getLogger(__name__)
 
 
-class AgentService:
+class FileWatcherService:
 
     def __init__(self):
 
-        self.document_service = DocumentService()
-        self.policy_service = PolicyService()
-        self.llm_service = LLMService()
+        self.agent_service = AgentService()
 
-    def validate_document(self, document_path: str) -> ValidationResponse:
-        """
-        Validates a document against the configured policy.
-        """
+        self.watch_folder = Path(settings.agent.watch_folder)
 
-        logger.info(f"Validating {document_path}")
+        self.approved_folder = Path(settings.agent.approved_folder)
 
-        document = self.document_service.extract_text(document_path)
+        self.rejected_folder = Path(settings.agent.rejected_folder)
 
-        policy = self.policy_service.load_policy()
+        self.processed = set()
 
-        prompt = ValidationPrompt.build(
-            policy=policy,
-            document=document
+    def start(self):
+
+        logger.info("Starting File Watcher...")
+
+        while True:
+
+            try:
+
+                self.scan_folder()
+
+                time.sleep(5)
+
+            except Exception as ex:
+
+                logger.exception(ex)
+
+                time.sleep(5)
+
+    def scan_folder(self):
+
+        files = self.watch_folder.iterdir()
+
+        for file in files:
+
+            if not file.is_file():
+                continue
+
+            if file.name in self.processed:
+                continue
+
+            logger.info(f"Found new file : {file.name}")
+
+            self.process_file(file)
+
+            self.processed.add(file.name)
+
+    def process_file(self, file: Path):
+
+        result = self.agent_service.validate_document(
+            str(file)
         )
 
-        response = self.llm_service.invoke(prompt)
+        logger.info(result)
 
-        logger.info("Received response from LLM")
+        if result.approved:
 
-        try:
+            destination = self.approved_folder / file.name
 
-            response_json = json.loads(response)
-
-            return ValidationResponse(
-                approved=response_json["approved"],
-                confidence=response_json["confidence"],
-                reason=response_json["reason"],
-                violations=response_json["violations"]
+            shutil.move(
+                str(file),
+                str(destination)
             )
 
-        except Exception as ex:
+            logger.info(f"{file.name} Approved")
 
-            logger.exception(ex)
+        else:
 
-            raise Exception(
-                f"Unable to parse LLM response.\n\n{response}"
+            destination = self.rejected_folder / file.name
+
+            shutil.move(
+                str(file),
+                str(destination)
             )
+
+            logger.info(f"{file.name} Rejected")
