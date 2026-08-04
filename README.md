@@ -1,51 +1,42 @@
-class ValidationPrompt:
+import logging
 
-    @staticmethod
-    def build(
-        policy: str,
-        document: str
-    ) -> str:
+from fastapi import APIRouter, HTTPException
+from pydantic import BaseModel
 
-        return f"""
-You are an enterprise compliance officer.
+from app.src.service.AgentService import AgentService
+from app.src.models.ValidationResponse import ValidationResponse
+from app.src.config.Config import settings
 
-Your responsibility is to validate whether a submitted document complies with the company policy.
+logger = logging.getLogger(__name__)
 
-========================
-POLICY
-========================
+AgentRouter = APIRouter(
+    prefix=settings.app.context_path,
+    tags=["Agent"]
+)
 
-{policy}
+agent_service = AgentService()
 
-========================
-DOCUMENT
-========================
 
-{document}
+class ValidationRequest(BaseModel):
+    document_path: str
 
-========================
-TASK
-========================
 
-Compare the document against every rule in the policy.
+@AgentRouter.post(
+    "/validate",
+    response_model=ValidationResponse
+)
+def validate_document(request: ValidationRequest):
 
-Return ONLY valid JSON.
+    try:
+        logger.info(f"Validating document : {request.document_path}")
 
-Schema:
+        return agent_service.validate_document(
+            document_path=request.document_path
+        )
 
-{{
-    "approved": true,
-    "confidence": 0.95,
-    "reason": "Short explanation",
-    "violations": [
-        "Violation 1",
-        "Violation 2"
-    ]
-}}
-
-Do not return markdown.
-
-Do not return code blocks.
-
-Return only JSON.
-"""
+    except Exception as ex:
+        logger.exception(ex)
+        raise HTTPException(
+            status_code=500,
+            detail=str(ex)
+        )
