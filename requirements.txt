@@ -1,65 +1,58 @@
+import json
 import logging
-from pathlib import Path
 
-import pdfplumber
-from docx import Document
+from app.src.models.ValidationResponse import ValidationResponse
+from app.src.prompts.ValidationPrompt import ValidationPrompt
+from app.src.service.DocumentService import DocumentService
+from app.src.service.LLMService import LLMService
+from app.src.service.PolicyService import PolicyService
 
 logger = logging.getLogger(__name__)
 
 
-class DocumentService:
+class AgentService:
 
-    @staticmethod
-    def extract_text(document_path: str) -> str:
+    def __init__(self):
+
+        self.document_service = DocumentService()
+        self.policy_service = PolicyService()
+        self.llm_service = LLMService()
+
+    def validate_document(self, document_path: str) -> ValidationResponse:
         """
-        Reads any supported document and extracts text.
+        Validates a document against the configured policy.
         """
 
-        extension = Path(document_path).suffix.lower()
+        logger.info(f"Validating {document_path}")
 
-        logger.info(f"Reading document : {document_path}")
+        document = self.document_service.extract_text(document_path)
 
-        if extension == ".txt":
-            return DocumentService._read_text(document_path)
+        policy = self.policy_service.load_policy()
 
-        if extension == ".pdf":
-            return DocumentService._read_pdf(document_path)
+        prompt = ValidationPrompt.build(
+            policy=policy,
+            document=document
+        )
 
-        if extension == ".docx":
-            return DocumentService._read_docx(document_path)
+        response = self.llm_service.invoke(prompt)
 
-        raise Exception(f"Unsupported document type : {extension}")
+        logger.info("Received response from LLM")
 
-    @staticmethod
-    def _read_text(path: str) -> str:
+        try:
 
-        with open(path, "r", encoding="utf-8") as file:
-            return file.read()
+            response_json = json.loads(response)
 
-    @staticmethod
-    def _read_pdf(path: str) -> str:
+            return ValidationResponse(
+                approved=response_json["approved"],
+                confidence=response_json["confidence"],
+                reason=response_json["reason"],
+                violations=response_json["violations"]
+            )
 
-        pages = []
+        except Exception as ex:
 
-        with pdfplumber.open(path) as pdf:
+            logger.exception(ex)
 
-            for page in pdf.pages:
-
-                text = page.extract_text()
-
-                if text:
-                    pages.append(text)
-
-        return "\n".join(pages)
-
-    @staticmethod
-    def _read_docx(path: str) -> str:
-
-        document = Document(path)
-
-        paragraphs = []
-
-        for paragraph in document.paragraphs:
-            paragraphs.append(paragraph.text)
-
-        return "\n".join(paragraphs)
+            raise Exception(
+                f"Unable to parse LLM response.\n\n{response}"
+            )
