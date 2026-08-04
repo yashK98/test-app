@@ -1,62 +1,65 @@
-import json
 import logging
+from pathlib import Path
 
-from pathfinder_sdk.llm.AIFGateway import AIFGateway
-
-from app.src.config.Config import settings
+import pdfplumber
+from docx import Document
 
 logger = logging.getLogger(__name__)
 
 
-class LLMService:
+class DocumentService:
 
-    def __init__(self):
-
-        self.client = AIFGateway(
-            auth_url=settings.databricks.auth_url,
-            endpoint_url=settings.databricks.endpoint_url,
-            model=settings.databricks.model,
-            client_id=settings.databricks.client_id,
-            audience=settings.databricks.audience,
-            public_key=settings.databricks.public_key,
-            private_key=settings.databricks.private_key
-        )
-
-    def invoke(self, prompt: str) -> str:
+    @staticmethod
+    def extract_text(document_path: str) -> str:
         """
-        Invoke Databricks LLM using AIFGateway.
+        Reads any supported document and extracts text.
         """
 
-        logger.info("Invoking Databricks LLM...")
+        extension = Path(document_path).suffix.lower()
 
-        llm_request = [
-            {
-                "role": "user",
-                "content": prompt
-            }
-        ]
+        logger.info(f"Reading document : {document_path}")
 
-        response = self.client.invoke(llm_request)
+        if extension == ".txt":
+            return DocumentService._read_text(document_path)
 
-        content = response["choices"][0]["message"]["content"]
+        if extension == ".pdf":
+            return DocumentService._read_pdf(document_path)
 
-        logger.info("LLM invocation completed.")
+        if extension == ".docx":
+            return DocumentService._read_docx(document_path)
 
-        return content
+        raise Exception(f"Unsupported document type : {extension}")
 
-    def invoke_json(self, prompt: str) -> dict:
-        """
-        Invokes the LLM and converts response into JSON.
-        """
+    @staticmethod
+    def _read_text(path: str) -> str:
 
-        response = self.invoke(prompt)
+        with open(path, "r", encoding="utf-8") as file:
+            return file.read()
 
-        try:
-            return json.loads(response)
+    @staticmethod
+    def _read_pdf(path: str) -> str:
 
-        except Exception as ex:
+        pages = []
 
-            logger.error("Unable to parse LLM JSON response.")
-            logger.error(response)
+        with pdfplumber.open(path) as pdf:
 
-            raise ex
+            for page in pdf.pages:
+
+                text = page.extract_text()
+
+                if text:
+                    pages.append(text)
+
+        return "\n".join(pages)
+
+    @staticmethod
+    def _read_docx(path: str) -> str:
+
+        document = Document(path)
+
+        paragraphs = []
+
+        for paragraph in document.paragraphs:
+            paragraphs.append(paragraph.text)
+
+        return "\n".join(paragraphs)
