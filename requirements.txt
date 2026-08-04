@@ -1,90 +1,25 @@
 import logging
-import shutil
-import time
-from pathlib import Path
 
 from app.src.config.Config import settings
-from app.src.service.AgentService import AgentService
 
 logger = logging.getLogger(__name__)
 
 
-class FileWatcherService:
+class PolicyService:
 
-    def __init__(self):
+    @staticmethod
+    def load_policy() -> str:
+        """
+        Loads the configured policy document.
+        """
 
-        self.agent_service = AgentService()
+        logger.info("Loading policy document...")
 
-        self.watch_folder = Path(settings.agent.watch_folder)
+        policy_path = settings.agent.policy_file
 
-        self.approved_folder = Path(settings.agent.approved_folder)
+        with open(policy_path, "r", encoding="utf-8") as file:
+            policy = file.read()
 
-        self.rejected_folder = Path(settings.agent.rejected_folder)
+        logger.info("Policy loaded successfully.")
 
-        self.processed = set()
-
-    def start(self):
-
-        logger.info("Starting File Watcher...")
-
-        while True:
-
-            try:
-
-                self.scan_folder()
-
-                time.sleep(5)
-
-            except Exception as ex:
-
-                logger.exception(ex)
-
-                time.sleep(5)
-
-    def scan_folder(self):
-
-        files = self.watch_folder.iterdir()
-
-        for file in files:
-
-            if not file.is_file():
-                continue
-
-            if file.name in self.processed:
-                continue
-
-            logger.info(f"Found new file : {file.name}")
-
-            self.process_file(file)
-
-            self.processed.add(file.name)
-
-    def process_file(self, file: Path):
-
-        result = self.agent_service.validate_document(
-            str(file)
-        )
-
-        logger.info(result)
-
-        if result.approved:
-
-            destination = self.approved_folder / file.name
-
-            shutil.move(
-                str(file),
-                str(destination)
-            )
-
-            logger.info(f"{file.name} Approved")
-
-        else:
-
-            destination = self.rejected_folder / file.name
-
-            shutil.move(
-                str(file),
-                str(destination)
-            )
-
-            logger.info(f"{file.name} Rejected")
+        return policy
