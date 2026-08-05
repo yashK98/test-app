@@ -1,25 +1,22 @@
-import logging
+COBAM Customer Onboarding Policy
 
-from app.src.config.Config import settings
+Purpose
+-------
+This policy defines the mandatory validation rules for onboarding customer documents.
 
-logger = logging.getLogger(__name__)
+Validation Rules
 
+1. Customer Full Name must be present.
+2. Date of Birth must be present.
+3. Government ID Number (Passport, PAN, Aadhaar, etc.) must be present.
+4. Residential Address must be present.
+5. Contact Number must be present.
+6. Customer Signature must be present.
+7. Document Issue Date must be present.
+8. Documents older than 90 days are considered expired for address proof.
+9. All mandatory fields should be readable.
+10. No mandatory field should contain placeholder values like "NA", "Unknown", or blank.
+11. The document must not contain any handwritten modifications.
+12. The customer must satisfy KYC requirements before approval.
 
-class PolicyService:
-
-    @staticmethod
-    def load_policy() -> str:
-        """
-        Loads the configured policy document.
-        """
-
-        logger.info("Loading policy document...")
-
-        policy_path = settings.agent.policy_file
-
-        with open(policy_path, "r", encoding="utf-8") as file:
-            policy = file.read()
-
-        logger.info("Policy loaded successfully.")
-
-        return policy
+Return the validation result indicating whether the submitted document complies with all the above rules.
