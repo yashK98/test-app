@@ -1,32 +1,154 @@
 import pandas as pd
-import joblib
-
-from sklearn.model_selection import train_test_split
-from sklearn.metrics import (
-    classification_report,
-    confusion_matrix,
-    accuracy_score,
-    precision_score,
-    recall_score,
-    f1_score
-)
-
-from xgboost import XGBClassifier
+from rapidfuzz.fuzz import ratio
 
 
 # ============================================================
-# 1. LOAD DATA
+# CONFIGURATION
 # ============================================================
 
-INPUT_FILE = "entity_resolution_training_features.csv"
+INPUT_FILE = "entity_resolution_training_data.csv"
+OUTPUT_FILE = "entity_resolution_training_features.csv"
+
+
+# ============================================================
+# LOAD SYNTHETIC DATA
+# ============================================================
 
 df = pd.read_csv(INPUT_FILE)
 
-print("Total records:", len(df))
+print("Loaded rows:", len(df))
 
 
 # ============================================================
-# 2. DEFINE FEATURES
+# STRING SIMILARITY
+# ============================================================
+
+def string_similarity(a, b):
+
+    if pd.isna(a) or pd.isna(b):
+        return 0.0
+
+    a = str(a).strip()
+    b = str(b).strip()
+
+    if not a or not b:
+        return 0.0
+
+    return ratio(a, b) / 100.0
+
+
+# ============================================================
+# EXACT MATCH
+# ============================================================
+
+def exact_match(a, b):
+
+    if pd.isna(a) or pd.isna(b):
+        return 0
+
+    a = str(a).strip()
+    b = str(b).strip()
+
+    if not a or not b:
+        return 0
+
+    return int(a == b)
+
+
+# ============================================================
+# FUZZY FEATURES
+# ============================================================
+
+print("Calculating name similarity...")
+
+df["name_similarity"] = [
+    string_similarity(a, b)
+    for a, b in zip(
+        df["name_1"],
+        df["name_2"]
+    )
+]
+
+
+print("Calculating native name similarity...")
+
+df["native_name_similarity"] = [
+    string_similarity(a, b)
+    for a, b in zip(
+        df["native_name_1"],
+        df["native_name_2"]
+    )
+]
+
+
+print("Calculating address similarity...")
+
+df["address_similarity"] = [
+    string_similarity(a, b)
+    for a, b in zip(
+        df["address_1"],
+        df["address_2"]
+    )
+]
+
+
+# ============================================================
+# EXACT-MATCH FEATURES
+# ============================================================
+
+print("Calculating exact-match features...")
+
+df["postcode_match"] = [
+    exact_match(a, b)
+    for a, b in zip(
+        df["postcode_1"],
+        df["postcode_2"]
+    )
+]
+
+df["city_match"] = [
+    exact_match(a, b)
+    for a, b in zip(
+        df["city_1"],
+        df["city_2"]
+    )
+]
+
+df["country_match"] = [
+    exact_match(a, b)
+    for a, b in zip(
+        df["country_iso_1"],
+        df["country_iso_2"]
+    )
+]
+
+df["phone_match"] = [
+    exact_match(a, b)
+    for a, b in zip(
+        df["phone_1"],
+        df["phone_2"]
+    )
+]
+
+df["website_match"] = [
+    exact_match(a, b)
+    for a, b in zip(
+        df["website_1"],
+        df["website_2"]
+    )
+]
+
+df["email_match"] = [
+    exact_match(a, b)
+    for a, b in zip(
+        df["email_1"],
+        df["email_2"]
+    )
+]
+
+
+# ============================================================
+# SELECT ML FEATURES
 # ============================================================
 
 feature_columns = [
@@ -41,196 +163,41 @@ feature_columns = [
     "email_match"
 ]
 
-X = df[feature_columns]
 
-y = df["label"]
-
-
-# ============================================================
-# 3. TRAIN / TEST SPLIT
-# ============================================================
-
-X_train, X_test, y_train, y_test = train_test_split(
-    X,
-    y,
-    test_size=0.20,
-    random_state=42,
-    stratify=y
-)
-
-
-print("\n========================================")
-print("DATA SPLIT")
-print("========================================")
-
-print("Training records:", len(X_train))
-print("Testing records:", len(X_test))
-
-print("\nTraining labels:")
-print(y_train.value_counts())
-
-print("\nTesting labels:")
-print(y_test.value_counts())
-
-
-# ============================================================
-# 4. CREATE MODEL
-# ============================================================
-
-model = XGBClassifier(
-    n_estimators=200,
-    max_depth=5,
-    learning_rate=0.05,
-    subsample=0.8,
-    colsample_bytree=0.8,
-    random_state=42,
-    eval_metric="logloss"
-)
-
-
-# ============================================================
-# 5. TRAIN MODEL
-# ============================================================
-
-print("\n========================================")
-print("TRAINING MODEL")
-print("========================================")
-
-model.fit(
-    X_train,
-    y_train
-)
-
-print("Training completed.")
-
-
-# ============================================================
-# 6. PREDICTIONS
-# ============================================================
-
-y_pred = model.predict(X_test)
-
-y_probability = model.predict_proba(X_test)[:, 1]
-
-
-# ============================================================
-# 7. EVALUATION
-# ============================================================
-
-print("\n========================================")
-print("MODEL PERFORMANCE")
-print("========================================")
-
-print(
-    "Accuracy:",
-    round(accuracy_score(y_test, y_pred), 4)
-)
-
-print(
-    "Precision:",
-    round(precision_score(y_test, y_pred), 4)
-)
-
-print(
-    "Recall:",
-    round(recall_score(y_test, y_pred), 4)
-)
-
-print(
-    "F1:",
-    round(f1_score(y_test, y_pred), 4)
-)
-
-
-print("\nClassification Report:")
-print(
-    classification_report(
-        y_test,
-        y_pred,
-        target_names=[
-            "Non-Match",
-            "Match"
-        ]
-    )
-)
-
-
-# ============================================================
-# 8. CONFUSION MATRIX
-# ============================================================
-
-print("\nConfusion Matrix:")
-
-print(
-    confusion_matrix(
-        y_test,
-        y_pred
-    )
-)
-
-
-# ============================================================
-# 9. FEATURE IMPORTANCE
-# ============================================================
-
-importance = pd.DataFrame({
-    "feature": feature_columns,
-    "importance": model.feature_importances_
-})
-
-importance = importance.sort_values(
-    "importance",
-    ascending=False
-)
-
-print("\n========================================")
-print("FEATURE IMPORTANCE")
-print("========================================")
-
-print(
-    importance.to_string(index=False)
-)
-
-
-# ============================================================
-# 10. SAVE MODEL
-# ============================================================
-
-MODEL_FILE = "entity_resolution_xgboost_model.pkl"
-
-joblib.dump(
-    model,
-    MODEL_FILE
-)
-
-print("\nModel saved as:", MODEL_FILE)
-
-
-# ============================================================
-# 11. CREATE TEST RESULTS
-# ============================================================
-
-test_results = df.loc[
-    X_test.index,
+ml_df = df[
     [
         "id_1",
-        "id_2"
+        "id_2",
+        *feature_columns,
+        "label"
     ]
 ].copy()
 
-test_results["actual_label"] = y_test
 
-test_results["predicted_label"] = y_pred
+# ============================================================
+# CHECK DATA
+# ============================================================
 
-test_results["match_probability"] = y_probability
+print("\n========================================")
+print("FEATURE DATASET")
+print("========================================")
+
+print("Rows:", len(ml_df))
+
+print("\nLabel distribution:")
+print(ml_df["label"].value_counts())
+
+print("\nSample:")
+print(ml_df.head(20).to_string(index=False))
 
 
-test_results.to_csv(
-    "entity_resolution_test_results.csv",
+# ============================================================
+# SAVE
+# ============================================================
+
+ml_df.to_csv(
+    OUTPUT_FILE,
     index=False
 )
 
-print(
-    "Test results saved as:",
-    "entity_resolution_test_results.csv"
-)
+print("\nSaved:", OUTPUT_FILE)
