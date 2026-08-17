@@ -1,246 +1,674 @@
 import pandas as pd
-from sqlalchemy import create_engine
-from rapidfuzz.fuzz import ratio
+import random
+import re
+
+# ============================================================
+# CONFIGURATION
+# ============================================================
+
+INPUT_FILE = "entity_resolution_records.csv"
+OUTPUT_FILE = "entity_resolution_training_data.csv"
+
+VARIANTS_PER_RECORD = 5
+
+# Make results reproducible
+random.seed(42)
 
 
 # ============================================================
-# 1. DATABASE CONNECTION
+# LOAD DATA
 # ============================================================
 
-DB_USER = "YOUR_USERNAME"
-DB_PASSWORD = "YOUR_PASSWORD"
-DB_HOST = "YOUR_HOST"
-DB_PORT = "5432"
-DB_NAME = "YOUR_DATABASE"
+df = pd.read_csv(INPUT_FILE)
 
-engine = create_engine(
-    f"postgresql+psycopg2://{DB_USER}:{DB_PASSWORD}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
-)
+print("Records loaded:", len(df))
 
+required_columns = [
+    "id",
+    "bvd_id",
+    "name_internat_norm",
+    "name_native_norm",
+    "address_line1_norm",
+    "postcode_norm",
+    "city_norm",
+    "country_norm",
+    "country_iso_cd_norm",
+    "phone_number_norm",
+    "website_address_norm",
+    "email_address_norm"
+]
 
-# ============================================================
-# 2. READ CANDIDATE PAIRS FROM POSTGRESQL
-# ============================================================
+missing_columns = [
+    col for col in required_columns
+    if col not in df.columns
+]
 
-query = """
-SELECT *
-FROM entity_recognition.contact_info_sp_features
-"""
-
-df = pd.read_sql(query, engine)
-
-print("Number of candidate pairs:", len(df))
-print("Columns:")
-print(df.columns.tolist())
-
-
-# ============================================================
-# 3. STRING SIMILARITY FUNCTION
-# ============================================================
-
-def string_similarity(a, b):
-
-    if pd.isna(a) or pd.isna(b):
-        return 0.0
-
-    a = str(a).strip()
-    b = str(b).strip()
-
-    if not a or not b:
-        return 0.0
-
-    return ratio(a, b) / 100.0
-
-
-# ============================================================
-# 4. EXACT MATCH FUNCTION
-# ============================================================
-
-def exact_match(a, b):
-
-    if pd.isna(a) or pd.isna(b):
-        return 0
-
-    a = str(a).strip()
-    b = str(b).strip()
-
-    if not a or not b:
-        return 0
-
-    return int(a == b)
-
-
-# ============================================================
-# 5. CALCULATE FUZZY SIMILARITY FEATURES
-# ============================================================
-
-print("Calculating name similarity...")
-
-df["name_similarity"] = [
-    string_similarity(a, b)
-    for a, b in zip(
-        df["name_1"],
-        df["name_2"]
+if missing_columns:
+    raise ValueError(
+        f"Missing columns: {missing_columns}"
     )
-]
-
-
-print("Calculating native name similarity...")
-
-df["native_name_similarity"] = [
-    string_similarity(a, b)
-    for a, b in zip(
-        df["native_name_1"],
-        df["native_name_2"]
-    )
-]
-
-
-print("Calculating address similarity...")
-
-df["address_similarity"] = [
-    string_similarity(a, b)
-    for a, b in zip(
-        df["address_1"],
-        df["address_2"]
-    )
-]
 
 
 # ============================================================
-# 6. CALCULATE EXACT MATCH FEATURES
+# HELPER FUNCTIONS
 # ============================================================
 
-print("Calculating exact-match features...")
+def clean(value):
+    if pd.isna(value):
+        return ""
+
+    return str(value).strip()
 
 
-df["postcode_match"] = [
-    exact_match(a, b)
-    for a, b in zip(
-        df["postcode_1"],
-        df["postcode_2"]
+def change_case(value):
+    value = clean(value)
+
+    if not value:
+        return value
+
+    return random.choice([
+        value.lower(),
+        value.upper(),
+        value.title()
+    ])
+
+
+def remove_punctuation(value):
+    value = clean(value)
+
+    if not value:
+        return value
+
+    return re.sub(r"[^\w\s]", "", value)
+
+
+def normalize_spaces(value):
+    value = clean(value)
+
+    if not value:
+        return value
+
+    return re.sub(r"\s+", " ", value).strip()
+
+
+# ============================================================
+# COMPANY NAME VARIATIONS
+# ============================================================
+
+def vary_company_name(value):
+
+    value = clean(value)
+
+    if not value:
+        return value
+
+    result = value
+
+    replacements = [
+        (r"\blimited\b", "ltd"),
+        (r"\bltd\b", "limited"),
+        (r"\bincorporated\b", "inc"),
+        (r"\binc\b", "incorporated"),
+        (r"\bcorporation\b", "corp"),
+        (r"\bcorp\b", "corporation"),
+        (r"\bcompany\b", "co"),
+        (r"\bco\b", "company"),
+        (r"\bpublic limited company\b", "plc"),
+        (r"\bplc\b", "public limited company")
+    ]
+
+    replacement_done = False
+
+    for pattern, replacement in replacements:
+
+        if re.search(pattern, result, flags=re.IGNORECASE):
+
+            result = re.sub(
+                pattern,
+                replacement,
+                result,
+                flags=re.IGNORECASE
+            )
+
+            replacement_done = True
+            break
+
+    if not replacement_done:
+        result = change_case(result)
+
+    return result
+
+
+# ============================================================
+# ADDRESS VARIATIONS
+# ============================================================
+
+def vary_address(value):
+
+    value = clean(value)
+
+    if not value:
+        return value
+
+    result = value
+
+    replacements = [
+        (r"\bstreet\b", "st"),
+        (r"\bst\b", "street"),
+        (r"\broad\b", "rd"),
+        (r"\brd\b", "road"),
+        (r"\bavenue\b", "ave"),
+        (r"\bave\b", "avenue"),
+        (r"\bboulevard\b", "blvd"),
+        (r"\bblvd\b", "boulevard"),
+        (r"\blane\b", "ln"),
+        (r"\bln\b", "lane"),
+        (r"\bdrive\b", "dr"),
+        (r"\bdr\b", "drive"),
+        (r"\bbuilding\b", "bldg"),
+        (r"\bbldg\b", "building")
+    ]
+
+    replacement_done = False
+
+    for pattern, replacement in replacements:
+
+        if re.search(pattern, result, flags=re.IGNORECASE):
+
+            result = re.sub(
+                pattern,
+                replacement,
+                result,
+                flags=re.IGNORECASE
+            )
+
+            replacement_done = True
+            break
+
+    if not replacement_done:
+        result = random.choice([
+            change_case(result),
+            normalize_spaces(result),
+            result.replace(",", ""),
+            result.replace(".", "")
+        ])
+
+    return result
+
+
+# ============================================================
+# POSTCODE VARIATION
+# ============================================================
+
+def vary_postcode(value):
+
+    value = clean(value)
+
+    if not value:
+        return value
+
+    # Add/remove spaces
+    compact = value.replace(" ", "")
+
+    if len(compact) > 4:
+
+        position = len(compact) // 2
+
+        spaced = (
+            compact[:position]
+            + " "
+            + compact[position:]
+        )
+
+        return random.choice([
+            compact,
+            spaced,
+            value.upper(),
+            value.lower()
+        ])
+
+    return value
+
+
+# ============================================================
+# PHONE VARIATION
+# ============================================================
+
+def vary_phone(value):
+
+    value = clean(value)
+
+    if not value:
+        return value
+
+    digits = re.sub(r"[^0-9]", "", value)
+
+    if not digits:
+        return value
+
+    # Preserve the digits but change formatting
+    formats = [
+        digits,
+        "+" + digits,
+        " ".join(
+            digits[i:i + 3]
+            for i in range(0, len(digits), 3)
+        ),
+        "-".join(
+            digits[i:i + 3]
+            for i in range(0, len(digits), 3)
+        )
+    ]
+
+    return random.choice(formats)
+
+
+# ============================================================
+# WEBSITE VARIATION
+# ============================================================
+
+def vary_website(value):
+
+    value = clean(value)
+
+    if not value:
+        return value
+
+    result = value
+
+    result = re.sub(
+        r"^https?://",
+        "",
+        result,
+        flags=re.IGNORECASE
     )
-]
 
-
-df["city_match"] = [
-    exact_match(a, b)
-    for a, b in zip(
-        df["city_1"],
-        df["city_2"]
+    result = re.sub(
+        r"^www\.",
+        "",
+        result,
+        flags=re.IGNORECASE
     )
-]
+
+    result = result.rstrip("/")
+
+    domain_variations = [
+        result,
+        "www." + result,
+        "https://" + result,
+        "http://" + result,
+        result + "/"
+    ]
+
+    return random.choice(domain_variations)
 
 
-df["country_match"] = [
-    exact_match(a, b)
-    for a, b in zip(
-        df["country_iso_1"],
-        df["country_iso_2"]
+# ============================================================
+# EMAIL VARIATION
+# ============================================================
+
+def vary_email(value):
+
+    value = clean(value)
+
+    if not value:
+        return value
+
+    return random.choice([
+        value.lower(),
+        value.upper(),
+        value.strip()
+    ])
+
+
+# ============================================================
+# CREATE ONE SYNTHETIC VARIANT
+# ============================================================
+
+def create_variant(record, variant_number):
+
+    variant = record.copy()
+
+    transformations = []
+
+    # Name
+    if clean(record["name_internat_norm"]):
+        transformations.append("name")
+
+    # Address
+    if clean(record["address_line1_norm"]):
+        transformations.append("address")
+
+    # Postcode
+    if clean(record["postcode_norm"]):
+        transformations.append("postcode")
+
+    # Phone
+    if clean(record["phone_number_norm"]):
+        transformations.append("phone")
+
+    # Website
+    if clean(record["website_address_norm"]):
+        transformations.append("website")
+
+    # Email
+    if clean(record["email_address_norm"]):
+        transformations.append("email")
+
+    # Choose 2–3 fields to modify
+    number_to_modify = min(
+        random.randint(2, 3),
+        len(transformations)
     )
-]
 
-
-df["phone_match"] = [
-    exact_match(a, b)
-    for a, b in zip(
-        df["phone_1"],
-        df["phone_2"]
+    selected = random.sample(
+        transformations,
+        number_to_modify
     )
-]
 
+    for field in selected:
 
-df["website_match"] = [
-    exact_match(a, b)
-    for a, b in zip(
-        df["website_1"],
-        df["website_2"]
+        if field == "name":
+
+            variant["name_internat_norm"] = (
+                vary_company_name(
+                    record["name_internat_norm"]
+                )
+            )
+
+        elif field == "address":
+
+            variant["address_line1_norm"] = (
+                vary_address(
+                    record["address_line1_norm"]
+                )
+            )
+
+        elif field == "postcode":
+
+            variant["postcode_norm"] = (
+                vary_postcode(
+                    record["postcode_norm"]
+                )
+            )
+
+        elif field == "phone":
+
+            variant["phone_number_norm"] = (
+                vary_phone(
+                    record["phone_number_norm"]
+                )
+            )
+
+        elif field == "website":
+
+            variant["website_address_norm"] = (
+                vary_website(
+                    record["website_address_norm"]
+                )
+            )
+
+        elif field == "email":
+
+            variant["email_address_norm"] = (
+                vary_email(
+                    record["email_address_norm"]
+                )
+            )
+
+    variant["synthetic_id"] = (
+        f"{record['id']}_V{variant_number}"
     )
-]
 
-
-df["email_match"] = [
-    exact_match(a, b)
-    for a, b in zip(
-        df["email_1"],
-        df["email_2"]
-    )
-]
+    return variant
 
 
 # ============================================================
-# 7. SELECT ML FEATURES
+# GENERATE POSITIVE PAIRS
 # ============================================================
 
-feature_columns = [
+positive_pairs = []
 
-    "id_1",
-    "id_2",
+print("\nGenerating positive pairs...")
 
-    "name_similarity",
-    "native_name_similarity",
-    "address_similarity",
+for _, record in df.iterrows():
 
-    "postcode_match",
-    "city_match",
-    "country_match",
+    generated_variants = []
 
-    "phone_match",
-    "website_match",
-    "email_match"
-]
+    attempts = 0
 
-features_df = df[feature_columns].copy()
+    while (
+        len(generated_variants) < VARIANTS_PER_RECORD
+        and attempts < 30
+    ):
 
+        attempts += 1
 
-# ============================================================
-# 8. DISPLAY RESULTS
-# ============================================================
+        variant = create_variant(
+            record,
+            len(generated_variants) + 1
+        )
 
-print("\n========================================")
-print("FEATURE GENERATION COMPLETE")
-print("========================================")
+        # Create a comparison signature
+        signature = tuple(
+            clean(variant[col])
+            for col in required_columns
+            if col in variant
+        )
 
-print("Total pairs:", len(features_df))
+        existing_signatures = [
+            tuple(
+                clean(v[col])
+                for col in required_columns
+                if col in v
+            )
+            for v in generated_variants
+        ]
 
-print("\nSample:")
-print(features_df.head(20).to_string(index=False))
+        if signature not in existing_signatures:
 
+            generated_variants.append(variant)
 
-# ============================================================
-# 9. BASIC FEATURE STATISTICS
-# ============================================================
+    for variant in generated_variants:
 
-print("\n========================================")
-print("FEATURE STATISTICS")
-print("========================================")
+        positive_pairs.append({
+
+            "id_1": record["id"],
+            "id_2": variant["synthetic_id"],
+
+            "bvd_id_1": record["bvd_id"],
+            "bvd_id_2": record["bvd_id"],
+
+            "name_1": record["name_internat_norm"],
+            "name_2": variant["name_internat_norm"],
+
+            "native_name_1": record["name_native_norm"],
+            "native_name_2": variant["name_native_norm"],
+
+            "address_1": record["address_line1_norm"],
+            "address_2": variant["address_line1_norm"],
+
+            "postcode_1": record["postcode_norm"],
+            "postcode_2": variant["postcode_norm"],
+
+            "city_1": record["city_norm"],
+            "city_2": variant["city_norm"],
+
+            "country_1": record["country_norm"],
+            "country_2": variant["country_norm"],
+
+            "country_iso_1": record["country_iso_cd_norm"],
+            "country_iso_2": record["country_iso_cd_norm"],
+
+            "phone_1": record["phone_number_norm"],
+            "phone_2": variant["phone_number_norm"],
+
+            "website_1": record["website_address_norm"],
+            "website_2": variant["website_address_norm"],
+
+            "email_1": record["email_address_norm"],
+            "email_2": variant["email_address_norm"],
+
+            "label": 1
+        })
+
 
 print(
-    features_df[
-        [
-            "name_similarity",
-            "native_name_similarity",
-            "address_similarity",
-            "postcode_match",
-            "city_match",
-            "country_match",
-            "phone_match",
-            "website_match",
-            "email_match"
-        ]
-    ].describe()
+    "Positive pairs generated:",
+    len(positive_pairs)
 )
 
 
 # ============================================================
-# 10. SAVE FEATURES
+# GENERATE NEGATIVE PAIRS
 # ============================================================
 
-output_file = "entity_resolution_features.csv"
+print("\nGenerating negative pairs...")
 
-features_df.to_csv(
-    output_file,
+negative_pairs = []
+
+target_negative_pairs = len(positive_pairs)
+
+record_list = df.to_dict("records")
+
+used_negative_pairs = set()
+
+while len(negative_pairs) < target_negative_pairs:
+
+    record_a = random.choice(record_list)
+    record_b = random.choice(record_list)
+
+    id_a = record_a["id"]
+    id_b = record_b["id"]
+
+    if id_a == id_b:
+        continue
+
+    pair_key = tuple(
+        sorted([str(id_a), str(id_b)])
+    )
+
+    if pair_key in used_negative_pairs:
+        continue
+
+    used_negative_pairs.add(pair_key)
+
+    negative_pairs.append({
+
+        "id_1": id_a,
+        "id_2": id_b,
+
+        "bvd_id_1": record_a["bvd_id"],
+        "bvd_id_2": record_b["bvd_id"],
+
+        "name_1": record_a["name_internat_norm"],
+        "name_2": record_b["name_internat_norm"],
+
+        "native_name_1": record_a["name_native_norm"],
+        "native_name_2": record_b["name_native_norm"],
+
+        "address_1": record_a["address_line1_norm"],
+        "address_2": record_b["address_line1_norm"],
+
+        "postcode_1": record_a["postcode_norm"],
+        "postcode_2": record_b["postcode_norm"],
+
+        "city_1": record_a["city_norm"],
+        "city_2": record_b["city_norm"],
+
+        "country_1": record_a["country_norm"],
+        "country_2": record_b["country_norm"],
+
+        "country_iso_1": record_a["country_iso_cd_norm"],
+        "country_iso_2": record_b["country_iso_cd_norm"],
+
+        "phone_1": record_a["phone_number_norm"],
+        "phone_2": record_b["phone_number_norm"],
+
+        "website_1": record_a["website_address_norm"],
+        "website_2": record_b["website_address_norm"],
+
+        "email_1": record_a["email_address_norm"],
+        "email_2": record_b["email_address_norm"],
+
+        "label": 0
+    })
+
+
+print(
+    "Negative pairs generated:",
+    len(negative_pairs)
+)
+
+
+# ============================================================
+# COMBINE POSITIVE + NEGATIVE
+# ============================================================
+
+training_df = pd.DataFrame(
+    positive_pairs + negative_pairs
+)
+
+# Shuffle
+training_df = training_df.sample(
+    frac=1,
+    random_state=42
+).reset_index(drop=True)
+
+
+# ============================================================
+# SAVE DATASET
+# ============================================================
+
+training_df.to_csv(
+    OUTPUT_FILE,
     index=False
 )
 
-print("\nFeatures saved to:", output_file)
+
+# ============================================================
+# SUMMARY
+# ============================================================
+
+print("\n==========================================")
+print("SYNTHETIC DATASET CREATED")
+print("==========================================")
+
+print("Total records:", len(training_df))
+
+print(
+    "Positive / Match:",
+    (training_df["label"] == 1).sum()
+)
+
+print(
+    "Negative / Non-match:",
+    (training_df["label"] == 0).sum()
+)
+
+print("\nLabel distribution:")
+print(
+    training_df["label"]
+    .value_counts()
+)
+
+print("\nSample:")
+print(
+    training_df[
+        [
+            "id_1",
+            "id_2",
+            "name_1",
+            "name_2",
+            "address_1",
+            "address_2",
+            "label"
+        ]
+    ]
+    .head(20)
+    .to_string(index=False)
+)
+
+print(
+    f"\nSaved to: {OUTPUT_FILE}"
+)
