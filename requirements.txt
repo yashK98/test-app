@@ -1,22 +1,246 @@
-COBAM Customer Onboarding Policy
+import pandas as pd
+from sqlalchemy import create_engine
+from rapidfuzz.fuzz import ratio
 
-Purpose
--------
-This policy defines the mandatory validation rules for onboarding customer documents.
 
-Validation Rules
+# ============================================================
+# 1. DATABASE CONNECTION
+# ============================================================
 
-1. Customer Full Name must be present.
-2. Date of Birth must be present.
-3. Government ID Number (Passport, PAN, Aadhaar, etc.) must be present.
-4. Residential Address must be present.
-5. Contact Number must be present.
-6. Customer Signature must be present.
-7. Document Issue Date must be present.
-8. Documents older than 90 days are considered expired for address proof.
-9. All mandatory fields should be readable.
-10. No mandatory field should contain placeholder values like "NA", "Unknown", or blank.
-11. The document must not contain any handwritten modifications.
-12. The customer must satisfy KYC requirements before approval.
+DB_USER = "YOUR_USERNAME"
+DB_PASSWORD = "YOUR_PASSWORD"
+DB_HOST = "YOUR_HOST"
+DB_PORT = "5432"
+DB_NAME = "YOUR_DATABASE"
 
-Return the validation result indicating whether the submitted document complies with all the above rules.
+engine = create_engine(
+    f"postgresql+psycopg2://{DB_USER}:{DB_PASSWORD}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
+)
+
+
+# ============================================================
+# 2. READ CANDIDATE PAIRS FROM POSTGRESQL
+# ============================================================
+
+query = """
+SELECT *
+FROM entity_recognition.contact_info_sp_features
+"""
+
+df = pd.read_sql(query, engine)
+
+print("Number of candidate pairs:", len(df))
+print("Columns:")
+print(df.columns.tolist())
+
+
+# ============================================================
+# 3. STRING SIMILARITY FUNCTION
+# ============================================================
+
+def string_similarity(a, b):
+
+    if pd.isna(a) or pd.isna(b):
+        return 0.0
+
+    a = str(a).strip()
+    b = str(b).strip()
+
+    if not a or not b:
+        return 0.0
+
+    return ratio(a, b) / 100.0
+
+
+# ============================================================
+# 4. EXACT MATCH FUNCTION
+# ============================================================
+
+def exact_match(a, b):
+
+    if pd.isna(a) or pd.isna(b):
+        return 0
+
+    a = str(a).strip()
+    b = str(b).strip()
+
+    if not a or not b:
+        return 0
+
+    return int(a == b)
+
+
+# ============================================================
+# 5. CALCULATE FUZZY SIMILARITY FEATURES
+# ============================================================
+
+print("Calculating name similarity...")
+
+df["name_similarity"] = [
+    string_similarity(a, b)
+    for a, b in zip(
+        df["name_1"],
+        df["name_2"]
+    )
+]
+
+
+print("Calculating native name similarity...")
+
+df["native_name_similarity"] = [
+    string_similarity(a, b)
+    for a, b in zip(
+        df["native_name_1"],
+        df["native_name_2"]
+    )
+]
+
+
+print("Calculating address similarity...")
+
+df["address_similarity"] = [
+    string_similarity(a, b)
+    for a, b in zip(
+        df["address_1"],
+        df["address_2"]
+    )
+]
+
+
+# ============================================================
+# 6. CALCULATE EXACT MATCH FEATURES
+# ============================================================
+
+print("Calculating exact-match features...")
+
+
+df["postcode_match"] = [
+    exact_match(a, b)
+    for a, b in zip(
+        df["postcode_1"],
+        df["postcode_2"]
+    )
+]
+
+
+df["city_match"] = [
+    exact_match(a, b)
+    for a, b in zip(
+        df["city_1"],
+        df["city_2"]
+    )
+]
+
+
+df["country_match"] = [
+    exact_match(a, b)
+    for a, b in zip(
+        df["country_iso_1"],
+        df["country_iso_2"]
+    )
+]
+
+
+df["phone_match"] = [
+    exact_match(a, b)
+    for a, b in zip(
+        df["phone_1"],
+        df["phone_2"]
+    )
+]
+
+
+df["website_match"] = [
+    exact_match(a, b)
+    for a, b in zip(
+        df["website_1"],
+        df["website_2"]
+    )
+]
+
+
+df["email_match"] = [
+    exact_match(a, b)
+    for a, b in zip(
+        df["email_1"],
+        df["email_2"]
+    )
+]
+
+
+# ============================================================
+# 7. SELECT ML FEATURES
+# ============================================================
+
+feature_columns = [
+
+    "id_1",
+    "id_2",
+
+    "name_similarity",
+    "native_name_similarity",
+    "address_similarity",
+
+    "postcode_match",
+    "city_match",
+    "country_match",
+
+    "phone_match",
+    "website_match",
+    "email_match"
+]
+
+features_df = df[feature_columns].copy()
+
+
+# ============================================================
+# 8. DISPLAY RESULTS
+# ============================================================
+
+print("\n========================================")
+print("FEATURE GENERATION COMPLETE")
+print("========================================")
+
+print("Total pairs:", len(features_df))
+
+print("\nSample:")
+print(features_df.head(20).to_string(index=False))
+
+
+# ============================================================
+# 9. BASIC FEATURE STATISTICS
+# ============================================================
+
+print("\n========================================")
+print("FEATURE STATISTICS")
+print("========================================")
+
+print(
+    features_df[
+        [
+            "name_similarity",
+            "native_name_similarity",
+            "address_similarity",
+            "postcode_match",
+            "city_match",
+            "country_match",
+            "phone_match",
+            "website_match",
+            "email_match"
+        ]
+    ].describe()
+)
+
+
+# ============================================================
+# 10. SAVE FEATURES
+# ============================================================
+
+output_file = "entity_resolution_features.csv"
+
+features_df.to_csv(
+    output_file,
+    index=False
+)
+
+print("\nFeatures saved to:", output_file)
