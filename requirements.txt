@@ -1,4 +1,7 @@
 import pandas as pd
+import joblib
+import re
+
 from rapidfuzz.fuzz import ratio
 
 
@@ -6,17 +9,125 @@ from rapidfuzz.fuzz import ratio
 # CONFIGURATION
 # ============================================================
 
-INPUT_FILE = "entity_resolution_training_data.csv"
-OUTPUT_FILE = "entity_resolution_training_features.csv"
+RECORDS_FILE = "entity_resolution_records.csv"
+MODEL_FILE = "entity_resolution_xgboost_model.pkl"
+
+TOP_N = 10
 
 
 # ============================================================
-# LOAD SYNTHETIC DATA
+# LOAD EXISTING RECORDS + MODEL
 # ============================================================
 
-df = pd.read_csv(INPUT_FILE)
+records = pd.read_csv(RECORDS_FILE)
 
-print("Loaded rows:", len(df))
+model = joblib.load(MODEL_FILE)
+
+print("Loaded records:", len(records))
+print("Model loaded successfully.")
+
+
+# ============================================================
+# NORMALIZATION FUNCTIONS
+# ============================================================
+
+def clean(value):
+
+    if value is None:
+        return ""
+
+    if pd.isna(value):
+        return ""
+
+    return str(value).strip()
+
+
+def normalize_text(value):
+
+    value = clean(value)
+
+    if not value:
+        return ""
+
+    value = value.lower()
+
+    value = re.sub(
+        r"[^a-zA-Z0-9]+",
+        " ",
+        value
+    )
+
+    value = re.sub(
+        r"\s+",
+        " ",
+        value
+    )
+
+    return value.strip()
+
+
+def normalize_postcode(value):
+
+    value = clean(value)
+
+    if not value:
+        return ""
+
+    return re.sub(
+        r"\s+",
+        "",
+        value
+    ).lower()
+
+
+def normalize_phone(value):
+
+    value = clean(value)
+
+    if not value:
+        return ""
+
+    return re.sub(
+        r"[^0-9]",
+        "",
+        value
+    )
+
+
+def normalize_website(value):
+
+    value = clean(value)
+
+    if not value:
+        return ""
+
+    value = re.sub(
+        r"^https?://",
+        "",
+        value,
+        flags=re.IGNORECASE
+    )
+
+    value = re.sub(
+        r"^www\.",
+        "",
+        value,
+        flags=re.IGNORECASE
+    )
+
+    value = value.rstrip("/")
+
+    return value.lower()
+
+
+def normalize_email(value):
+
+    value = clean(value)
+
+    if not value:
+        return ""
+
+    return value.lower()
 
 
 # ============================================================
@@ -25,29 +136,13 @@ print("Loaded rows:", len(df))
 
 def string_similarity(a, b):
 
-    if pd.isna(a) or pd.isna(b):
-        return 0.0
-
-    a = str(a).strip()
-    b = str(b).strip()
-
     if not a or not b:
         return 0.0
 
     return ratio(a, b) / 100.0
 
 
-# ============================================================
-# EXACT MATCH
-# ============================================================
-
 def exact_match(a, b):
-
-    if pd.isna(a) or pd.isna(b):
-        return 0
-
-    a = str(a).strip()
-    b = str(b).strip()
 
     if not a or not b:
         return 0
@@ -56,148 +151,283 @@ def exact_match(a, b):
 
 
 # ============================================================
-# FUZZY FEATURES
+# ENTER YOUR TEST RECORD HERE
 # ============================================================
 
-print("Calculating name similarity...")
+test_record = {
 
-df["name_similarity"] = [
-    string_similarity(a, b)
-    for a, b in zip(
-        df["name_1"],
-        df["name_2"]
-    )
-]
+    "name_internat": "ABC Technologies Limited",
 
+    "name_native": "",
 
-print("Calculating native name similarity...")
+    "address_line1": "12 Main Street",
 
-df["native_name_similarity"] = [
-    string_similarity(a, b)
-    for a, b in zip(
-        df["native_name_1"],
-        df["native_name_2"]
-    )
-]
+    "postcode": "SW1A 1AA",
 
+    "city": "London",
 
-print("Calculating address similarity...")
+    "country": "United Kingdom",
 
-df["address_similarity"] = [
-    string_similarity(a, b)
-    for a, b in zip(
-        df["address_1"],
-        df["address_2"]
-    )
-]
+    "country_iso_cd": "GB",
+
+    "phone_number": "+44 20 1234 5678",
+
+    "website_address": "https://www.abctech.com/",
+
+    "email_address": "contact@abctech.com"
+}
 
 
 # ============================================================
-# EXACT-MATCH FEATURES
+# NORMALIZE TEST RECORD
 # ============================================================
 
-print("Calculating exact-match features...")
+test = {
 
-df["postcode_match"] = [
-    exact_match(a, b)
-    for a, b in zip(
-        df["postcode_1"],
-        df["postcode_2"]
+    "name": normalize_text(
+        test_record["name_internat"]
+    ),
+
+    "native_name": normalize_text(
+        test_record["name_native"]
+    ),
+
+    "address": normalize_text(
+        test_record["address_line1"]
+    ),
+
+    "postcode": normalize_postcode(
+        test_record["postcode"]
+    ),
+
+    "city": normalize_text(
+        test_record["city"]
+    ),
+
+    "country": normalize_text(
+        test_record["country"]
+    ),
+
+    "country_iso": clean(
+        test_record["country_iso_cd"]
+    ).upper(),
+
+    "phone": normalize_phone(
+        test_record["phone_number"]
+    ),
+
+    "website": normalize_website(
+        test_record["website_address"]
+    ),
+
+    "email": normalize_email(
+        test_record["email_address"]
     )
-]
+}
 
-df["city_match"] = [
-    exact_match(a, b)
-    for a, b in zip(
-        df["city_1"],
-        df["city_2"]
+
+# ============================================================
+# CALCULATE FEATURES AGAINST EVERY RECORD
+# ============================================================
+
+results = []
+
+print("\nComparing test record against all records...")
+
+
+for _, record in records.iterrows():
+
+    name_similarity = string_similarity(
+        test["name"],
+        clean(record["name_internat_norm"])
     )
-]
 
-df["country_match"] = [
-    exact_match(a, b)
-    for a, b in zip(
-        df["country_iso_1"],
-        df["country_iso_2"]
+    native_name_similarity = string_similarity(
+        test["native_name"],
+        clean(record["name_native_norm"])
     )
-]
 
-df["phone_match"] = [
-    exact_match(a, b)
-    for a, b in zip(
-        df["phone_1"],
-        df["phone_2"]
+    address_similarity = string_similarity(
+        test["address"],
+        clean(record["address_line1_norm"])
     )
-]
 
-df["website_match"] = [
-    exact_match(a, b)
-    for a, b in zip(
-        df["website_1"],
-        df["website_2"]
+    postcode_match = exact_match(
+        test["postcode"],
+        clean(record["postcode_norm"])
     )
-]
 
-df["email_match"] = [
-    exact_match(a, b)
-    for a, b in zip(
-        df["email_1"],
-        df["email_2"]
+    city_match = exact_match(
+        test["city"],
+        clean(record["city_norm"])
     )
-]
+
+    country_match = exact_match(
+        test["country_iso"],
+        clean(record["country_iso_cd_norm"])
+    )
+
+    phone_match = exact_match(
+        test["phone"],
+        clean(record["phone_number_norm"])
+    )
+
+    website_match = exact_match(
+        test["website"],
+        clean(record["website_address_norm"])
+    )
+
+    email_match = exact_match(
+        test["email"],
+        clean(record["email_address_norm"])
+    )
+
+
+    # ========================================================
+    # FEATURES MUST MATCH TRAINING FEATURES
+    # ========================================================
+
+    features = [[
+        name_similarity,
+        native_name_similarity,
+        address_similarity,
+        postcode_match,
+        city_match,
+        country_match,
+        phone_match,
+        website_match,
+        email_match
+    ]]
+
+
+    # ========================================================
+    # MODEL PREDICTION
+    # ========================================================
+
+    probability = model.predict_proba(
+        features
+    )[0][1]
+
+
+    results.append({
+
+        "id": record["id"],
+
+        "bvd_id": record["bvd_id"],
+
+        "name": record["name_internat_norm"],
+
+        "city": record["city_norm"],
+
+        "country": record["country_norm"],
+
+        "name_similarity": round(
+            name_similarity,
+            4
+        ),
+
+        "address_similarity": round(
+            address_similarity,
+            4
+        ),
+
+        "postcode_match": postcode_match,
+
+        "city_match": city_match,
+
+        "country_match": country_match,
+
+        "phone_match": phone_match,
+
+        "website_match": website_match,
+
+        "email_match": email_match,
+
+        "match_probability": round(
+            probability,
+            4
+        )
+    })
 
 
 # ============================================================
-# SELECT ML FEATURES
+# SORT BY MATCH PROBABILITY
 # ============================================================
 
-feature_columns = [
-    "name_similarity",
-    "native_name_similarity",
-    "address_similarity",
-    "postcode_match",
-    "city_match",
-    "country_match",
-    "phone_match",
-    "website_match",
-    "email_match"
-]
+results_df = pd.DataFrame(results)
 
-
-ml_df = df[
-    [
-        "id_1",
-        "id_2",
-        *feature_columns,
-        "label"
-    ]
-].copy()
+results_df = results_df.sort_values(
+    "match_probability",
+    ascending=False
+)
 
 
 # ============================================================
-# CHECK DATA
+# DISPLAY TOP MATCHES
 # ============================================================
 
-print("\n========================================")
-print("FEATURE DATASET")
-print("========================================")
+print("\n==========================================")
+print("TOP MATCHES")
+print("==========================================")
 
-print("Rows:", len(ml_df))
-
-print("\nLabel distribution:")
-print(ml_df["label"].value_counts())
-
-print("\nSample:")
-print(ml_df.head(20).to_string(index=False))
+print(
+    results_df.head(TOP_N).to_string(
+        index=False
+    )
+)
 
 
 # ============================================================
-# SAVE
+# BEST MATCH
 # ============================================================
 
-ml_df.to_csv(
-    OUTPUT_FILE,
+best_match = results_df.iloc[0]
+
+print("\n==========================================")
+print("BEST MATCH")
+print("==========================================")
+
+print(
+    "ID:",
+    best_match["id"]
+)
+
+print(
+    "BVD ID:",
+    best_match["bvd_id"]
+)
+
+print(
+    "Name:",
+    best_match["name"]
+)
+
+print(
+    "City:",
+    best_match["city"]
+)
+
+print(
+    "Country:",
+    best_match["country"]
+)
+
+print(
+    "Match Probability:",
+    best_match["match_probability"]
+)
+
+
+# ============================================================
+# SAVE RESULTS
+# ============================================================
+
+results_df.to_csv(
+    "entity_resolution_prediction_results.csv",
     index=False
 )
 
-print("\nSaved:", OUTPUT_FILE)
+print(
+    "\nFull results saved to:",
+    "entity_resolution_prediction_results.csv"
+)
