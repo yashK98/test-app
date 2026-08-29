@@ -1,433 +1,96 @@
-import pandas as pd
-import joblib
 import re
-
-from rapidfuzz.fuzz import ratio
-
-
-# ============================================================
-# CONFIGURATION
-# ============================================================
-
-RECORDS_FILE = "entity_resolution_records.csv"
-MODEL_FILE = "entity_resolution_xgboost_model.pkl"
-
-TOP_N = 10
+from bs4 import BeautifulSoup
 
 
-# ============================================================
-# LOAD EXISTING RECORDS + MODEL
-# ============================================================
+def extract_email_content(html):
 
-records = pd.read_csv(RECORDS_FILE)
-
-model = joblib.load(MODEL_FILE)
-
-print("Loaded records:", len(records))
-print("Model loaded successfully.")
-
-
-# ============================================================
-# NORMALIZATION FUNCTIONS
-# ============================================================
-
-def clean(value):
-
-    if value is None:
+    if not html:
         return ""
 
-    if pd.isna(value):
-        return ""
+    # --------------------------------------------------
+    # Step 1: HTML -> BeautifulSoup
+    # --------------------------------------------------
 
-    return str(value).strip()
+    soup = BeautifulSoup(html, "lxml")
 
+    # Remove non-email-content HTML
+    for tag in soup(["script", "style", "img", "svg", "head"]):
+        tag.decompose()
 
-def normalize_text(value):
+    # --------------------------------------------------
+    # Step 2: HTML -> plain text
+    # --------------------------------------------------
 
-    value = clean(value)
+    text = soup.get_text("\n")
 
-    if not value:
-        return ""
+    # --------------------------------------------------
+    # Step 3: Remove quoted / previous emails
+    # --------------------------------------------------
 
-    value = value.lower()
+    reply_patterns = [
+        r"(?im)^[-\s]*Original Message[-\s]*$",
+        r"(?im)^Begin forwarded message:\s*$",
+        r"(?im)^From:\s*.+$",
+    ]
 
-    value = re.sub(
-        r"[^a-zA-Z0-9]+",
-        " ",
-        value
-    )
+    positions = []
 
-    value = re.sub(
-        r"\s+",
-        " ",
-        value
-    )
+    for pattern in reply_patterns:
+        match = re.search(pattern, text)
 
-    return value.strip()
+        if match:
+            positions.append(match.start())
 
+    if positions:
+        text = text[:min(positions)]
 
-def normalize_postcode(value):
+    # --------------------------------------------------
+    # Step 4: Remove signature
+    # --------------------------------------------------
 
-    value = clean(value)
+    signature_patterns = [
+        r"(?im)^Regards,?\s*$",
+        r"(?im)^Warm Regards,?\s*$",
+        r"(?im)^Best Regards,?\s*$",
+        r"(?im)^Kind Regards,?\s*$",
+        r"(?im)^Thanks,?\s*$",
+        r"(?im)^Thank you,?\s*$",
+    ]
 
-    if not value:
-        return ""
+    positions = []
 
-    return re.sub(
-        r"\s+",
-        "",
-        value
-    ).lower()
+    for pattern in signature_patterns:
+        match = re.search(pattern, text)
 
+        if match:
+            positions.append(match.start())
 
-def normalize_phone(value):
+    if positions:
+        text = text[:min(positions)]
 
-    value = clean(value)
+    # --------------------------------------------------
+    # Step 5: Remove known corporate noise
+    # --------------------------------------------------
 
-    if not value:
-        return ""
+    noise_patterns = [
+        r"(?im)^INTERNAL\s*$",
+        r"(?im)^EXTERNAL EMAIL\s*$",
+    ]
 
-    return re.sub(
-        r"[^0-9]",
-        "",
-        value
-    )
+    for pattern in noise_patterns:
+        text = re.sub(pattern, "", text)
 
+    # --------------------------------------------------
+    # Step 6: Clean whitespace
+    # --------------------------------------------------
 
-def normalize_website(value):
+    lines = []
 
-    value = clean(value)
+    for line in text.splitlines():
 
-    if not value:
-        return ""
+        line = line.strip()
 
-    value = re.sub(
-        r"^https?://",
-        "",
-        value,
-        flags=re.IGNORECASE
-    )
+        if line:
+            lines.append(line)
 
-    value = re.sub(
-        r"^www\.",
-        "",
-        value,
-        flags=re.IGNORECASE
-    )
-
-    value = value.rstrip("/")
-
-    return value.lower()
-
-
-def normalize_email(value):
-
-    value = clean(value)
-
-    if not value:
-        return ""
-
-    return value.lower()
-
-
-# ============================================================
-# STRING SIMILARITY
-# ============================================================
-
-def string_similarity(a, b):
-
-    if not a or not b:
-        return 0.0
-
-    return ratio(a, b) / 100.0
-
-
-def exact_match(a, b):
-
-    if not a or not b:
-        return 0
-
-    return int(a == b)
-
-
-# ============================================================
-# ENTER YOUR TEST RECORD HERE
-# ============================================================
-
-test_record = {
-
-    "name_internat": "ABC Technologies Limited",
-
-    "name_native": "",
-
-    "address_line1": "12 Main Street",
-
-    "postcode": "SW1A 1AA",
-
-    "city": "London",
-
-    "country": "United Kingdom",
-
-    "country_iso_cd": "GB",
-
-    "phone_number": "+44 20 1234 5678",
-
-    "website_address": "https://www.abctech.com/",
-
-    "email_address": "contact@abctech.com"
-}
-
-
-# ============================================================
-# NORMALIZE TEST RECORD
-# ============================================================
-
-test = {
-
-    "name": normalize_text(
-        test_record["name_internat"]
-    ),
-
-    "native_name": normalize_text(
-        test_record["name_native"]
-    ),
-
-    "address": normalize_text(
-        test_record["address_line1"]
-    ),
-
-    "postcode": normalize_postcode(
-        test_record["postcode"]
-    ),
-
-    "city": normalize_text(
-        test_record["city"]
-    ),
-
-    "country": normalize_text(
-        test_record["country"]
-    ),
-
-    "country_iso": clean(
-        test_record["country_iso_cd"]
-    ).upper(),
-
-    "phone": normalize_phone(
-        test_record["phone_number"]
-    ),
-
-    "website": normalize_website(
-        test_record["website_address"]
-    ),
-
-    "email": normalize_email(
-        test_record["email_address"]
-    )
-}
-
-
-# ============================================================
-# CALCULATE FEATURES AGAINST EVERY RECORD
-# ============================================================
-
-results = []
-
-print("\nComparing test record against all records...")
-
-
-for _, record in records.iterrows():
-
-    name_similarity = string_similarity(
-        test["name"],
-        clean(record["name_internat_norm"])
-    )
-
-    native_name_similarity = string_similarity(
-        test["native_name"],
-        clean(record["name_native_norm"])
-    )
-
-    address_similarity = string_similarity(
-        test["address"],
-        clean(record["address_line1_norm"])
-    )
-
-    postcode_match = exact_match(
-        test["postcode"],
-        clean(record["postcode_norm"])
-    )
-
-    city_match = exact_match(
-        test["city"],
-        clean(record["city_norm"])
-    )
-
-    country_match = exact_match(
-        test["country_iso"],
-        clean(record["country_iso_cd_norm"])
-    )
-
-    phone_match = exact_match(
-        test["phone"],
-        clean(record["phone_number_norm"])
-    )
-
-    website_match = exact_match(
-        test["website"],
-        clean(record["website_address_norm"])
-    )
-
-    email_match = exact_match(
-        test["email"],
-        clean(record["email_address_norm"])
-    )
-
-
-    # ========================================================
-    # FEATURES MUST MATCH TRAINING FEATURES
-    # ========================================================
-
-    features = [[
-        name_similarity,
-        native_name_similarity,
-        address_similarity,
-        postcode_match,
-        city_match,
-        country_match,
-        phone_match,
-        website_match,
-        email_match
-    ]]
-
-
-    # ========================================================
-    # MODEL PREDICTION
-    # ========================================================
-
-    probability = model.predict_proba(
-        features
-    )[0][1]
-
-
-    results.append({
-
-        "id": record["id"],
-
-        "bvd_id": record["bvd_id"],
-
-        "name": record["name_internat_norm"],
-
-        "city": record["city_norm"],
-
-        "country": record["country_norm"],
-
-        "name_similarity": round(
-            name_similarity,
-            4
-        ),
-
-        "address_similarity": round(
-            address_similarity,
-            4
-        ),
-
-        "postcode_match": postcode_match,
-
-        "city_match": city_match,
-
-        "country_match": country_match,
-
-        "phone_match": phone_match,
-
-        "website_match": website_match,
-
-        "email_match": email_match,
-
-        "match_probability": round(
-            probability,
-            4
-        )
-    })
-
-
-# ============================================================
-# SORT BY MATCH PROBABILITY
-# ============================================================
-
-results_df = pd.DataFrame(results)
-
-results_df = results_df.sort_values(
-    "match_probability",
-    ascending=False
-)
-
-
-# ============================================================
-# DISPLAY TOP MATCHES
-# ============================================================
-
-print("\n==========================================")
-print("TOP MATCHES")
-print("==========================================")
-
-print(
-    results_df.head(TOP_N).to_string(
-        index=False
-    )
-)
-
-
-# ============================================================
-# BEST MATCH
-# ============================================================
-
-best_match = results_df.iloc[0]
-
-print("\n==========================================")
-print("BEST MATCH")
-print("==========================================")
-
-print(
-    "ID:",
-    best_match["id"]
-)
-
-print(
-    "BVD ID:",
-    best_match["bvd_id"]
-)
-
-print(
-    "Name:",
-    best_match["name"]
-)
-
-print(
-    "City:",
-    best_match["city"]
-)
-
-print(
-    "Country:",
-    best_match["country"]
-)
-
-print(
-    "Match Probability:",
-    best_match["match_probability"]
-)
-
-
-# ============================================================
-# SAVE RESULTS
-# ============================================================
-
-results_df.to_csv(
-    "entity_resolution_prediction_results.csv",
-    index=False
-)
-
-print(
-    "\nFull results saved to:",
-    "entity_resolution_prediction_results.csv"
-)
+    return "\n".join(lines)
