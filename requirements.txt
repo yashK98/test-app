@@ -7,26 +7,26 @@ def extract_email_content(html):
     if not html:
         return ""
 
-    # --------------------------------------------------
-    # Step 1: HTML -> BeautifulSoup
-    # --------------------------------------------------
-
+    # 1. HTML -> BeautifulSoup
     soup = BeautifulSoup(html, "lxml")
 
-    # Remove non-email-content HTML
+    # 2. Remove non-text content
     for tag in soup(["script", "style", "img", "svg", "head"]):
         tag.decompose()
 
-    # --------------------------------------------------
-    # Step 2: HTML -> plain text
-    # --------------------------------------------------
-
+    # 3. HTML -> text
     text = soup.get_text("\n")
 
-    # --------------------------------------------------
-    # Step 3: Remove quoted / previous emails
-    # --------------------------------------------------
+    # 4. Remove external email warning
+    text = re.sub(
+        r"(?is)ATTENTION:\s*"
+        r"This email came from an external source\..*?"
+        r"our clients\.",
+        "",
+        text
+    )
 
+    # 5. Remove previous/quoted email
     reply_patterns = [
         r"(?im)^[-\s]*Original Message[-\s]*$",
         r"(?im)^Begin forwarded message:\s*$",
@@ -44,10 +44,7 @@ def extract_email_content(html):
     if positions:
         text = text[:min(positions)]
 
-    # --------------------------------------------------
-    # Step 4: Remove signature
-    # --------------------------------------------------
-
+    # 6. Remove signature
     signature_patterns = [
         r"(?im)^Regards,?\s*$",
         r"(?im)^Warm Regards,?\s*$",
@@ -68,29 +65,18 @@ def extract_email_content(html):
     if positions:
         text = text[:min(positions)]
 
-    # --------------------------------------------------
-    # Step 5: Remove known corporate noise
-    # --------------------------------------------------
-
-    noise_patterns = [
+    # 7. Remove INTERNAL banner
+    text = re.sub(
         r"(?im)^INTERNAL\s*$",
-        r"(?im)^EXTERNAL EMAIL\s*$",
+        "",
+        text
+    )
+
+    # 8. Clean whitespace
+    lines = [
+        line.strip()
+        for line in text.splitlines()
+        if line.strip()
     ]
-
-    for pattern in noise_patterns:
-        text = re.sub(pattern, "", text)
-
-    # --------------------------------------------------
-    # Step 6: Clean whitespace
-    # --------------------------------------------------
-
-    lines = []
-
-    for line in text.splitlines():
-
-        line = line.strip()
-
-        if line:
-            lines.append(line)
 
     return "\n".join(lines)
