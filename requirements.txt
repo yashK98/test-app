@@ -1,4 +1,504 @@
-def remove_encoded_blocks(text):
-    text = re.sub(r'(?is)-----BEGIN .*?-----.*?(?:-----END .*?-----|$)',
-                  '[ENCODED_DATA_REMOVED]', text)
-    return text
+import os
+import pickle
+import numpy as np
+import pandas as pd
+import keras
+import keras_hub
+
+from sqlalchemy import create_engine
+from sklearn.preprocessing import LabelEncoder
+from sklearn.model_selection import train_test_split
+from sklearn.metrics import classification_report, confusion_matrix
+
+
+# ============================================================
+# CONFIGURATION
+# ============================================================
+
+# Database
+DB_CONNECTION_STRING = (
+    "postgresql://cibdbuser:YOUR_PASSWORD@YOUR_HOST:5432/databricksdb"
+)
+
+# Local KerasHub pretrained model
+MODEL_PATH = (
+    r"C:\Users\1626752\poc\transformer-based-classification"
+    r"\distil_bert_keras-distil_bert_base_multi-v3"
+)
+
+# Where the fine-tuned model will be saved
+OUTPUT_MODEL_PATH = (
+    r"C:\Users\1626752\poc\transformer-based-classification"
+    r"\gems_product_group_model"
+)
+
+# Label encoder
+LABEL_ENCODER_PATH = (
+    r"C:\Users\1626752\poc\transformer-based-classification"
+    r"\product_group_encoder.pkl"
+)
+
+# Training parameters
+TEST_SIZE = 0.20
+RANDOM_STATE = 42
+
+BATCH_SIZE = 4
+EPOCHS = 2
+LEARNING_RATE = 2e-5
+
+
+# ============================================================
+# DATABASE CONNECTION
+# ============================================================
+
+engine = create_engine(DB_CONNECTION_STRING)
+
+
+# ============================================================
+# READ DATA FROM DATABASE
+# ============================================================
+
+print("\n" + "=" * 70)
+print("STEP 1 - READING DATA FROM DATABASE")
+print("=" * 70)
+
+query = """
+SELECT
+    '[SUBJECT] ' || email_subject ||
+    ' [BODY] ' || email_body_cleaned AS email_text,
+
+    product_group,
+    subproduct_group,
+    product_services
+
+FROM gems.training_encoded_data
+WHERE email_subject IS NOT NULL
+  AND email_body_cleaned IS NOT NULL
+  AND product_group IS NOT NULL
+  AND subproduct_group IS NOT NULL
+  AND product_services IS NOT NULL
+"""
+
+print("Executing query...")
+
+df = pd.read_sql(
+    query,
+    con=engine
+)
+
+print(f"Dataset shape: {df.shape}")
+
+print("\nColumns:")
+print(df.columns.tolist())
+
+
+# ============================================================
+# PREPARE INPUT AND TARGET
+# ============================================================
+
+print("\n" + "=" * 70)
+print("STEP 2 - PREPARING TRAINING DATA")
+print("=" * 70)
+
+# Your data is already cleaned.
+# We simply select the input and target.
+
+X = df["email_text"].astype(str).values
+
+y_text = df["product_group"].astype(str).values
+
+
+# ============================================================
+# LABEL ENCODING
+# ============================================================
+
+label_encoder = LabelEncoder()
+
+y = label_encoder.fit_transform(
+    y_text
+)
+
+num_classes = len(
+    label_encoder.classes_
+)
+
+print(
+    f"Number of Product Group classes: "
+    f"{num_classes}"
+)
+
+print("\nProduct Group label mapping:")
+
+for index, label in enumerate(
+    label_encoder.classes_
+):
+    print(
+        f"{index:4d} -> {label}"
+    )
+
+
+# ============================================================
+# TRAIN / TEST SPLIT
+# ============================================================
+
+print("\n" + "=" * 70)
+print("STEP 3 - TRAIN / TEST SPLIT")
+print("=" * 70)
+
+X_train, X_test, y_train, y_test = train_test_split(
+
+    X,
+    y,
+
+    test_size=TEST_SIZE,
+
+    random_state=RANDOM_STATE,
+
+    stratify=y
+)
+
+print(
+    f"Training samples : {len(X_train)}"
+)
+
+print(
+    f"Testing samples  : {len(X_test)}"
+)
+
+
+# ============================================================
+# LOAD LOCAL DISTILBERT
+# ============================================================
+
+print("\n" + "=" * 70)
+print("STEP 4 - LOADING LOCAL DISTILBERT")
+print("=" * 70)
+
+if not os.path.exists(MODEL_PATH):
+
+    raise FileNotFoundError(
+        f"\nModel directory not found:\n{MODEL_PATH}"
+    )
+
+print(
+    f"Model path:\n{MODEL_PATH}"
+)
+
+print("\nLoading pretrained model...")
+
+classifier = (
+    keras_hub.models.TextClassifier.from_preset(
+
+        MODEL_PATH,
+
+        num_classes=num_classes
+    )
+)
+
+print("\nModel loaded successfully.")
+
+
+# ============================================================
+# COMPILE
+# ============================================================
+
+print("\n" + "=" * 70)
+print("STEP 5 - COMPILING MODEL")
+print("=" * 70)
+
+classifier.compile(
+
+    optimizer=keras.optimizers.AdamW(
+        learning_rate=LEARNING_RATE
+    ),
+
+    loss=keras.losses.SparseCategoricalCrossentropy(
+        from_logits=True
+    ),
+
+    metrics=[
+        "accuracy"
+    ]
+)
+
+print("Optimizer       :", "AdamW")
+print("Learning rate   :", LEARNING_RATE)
+print("Batch size      :", BATCH_SIZE)
+print("Epochs          :", EPOCHS)
+
+
+# ============================================================
+# TRAIN
+# ============================================================
+
+print("\n" + "=" * 70)
+print("STEP 6 - TRAINING")
+print("=" * 70)
+
+history = classifier.fit(
+
+    X_train,
+
+    y_train,
+
+    validation_data=(
+        X_test,
+        y_test
+    ),
+
+    batch_size=BATCH_SIZE,
+
+    epochs=EPOCHS,
+
+    verbose=1
+)
+
+
+# ============================================================
+# EVALUATION
+# ============================================================
+
+print("\n" + "=" * 70)
+print("STEP 7 - EVALUATION")
+print("=" * 70)
+
+print("\nGenerating predictions...")
+
+predictions = classifier.predict(
+    X_test,
+    batch_size=BATCH_SIZE
+)
+
+# Convert model output to predicted class
+predicted_classes = np.argmax(
+    predictions,
+    axis=1
+)
+
+
+# ------------------------------------------------------------
+# Accuracy
+# ------------------------------------------------------------
+
+accuracy = np.mean(
+    predicted_classes == y_test
+)
+
+print(
+    f"\nOverall Test Accuracy: "
+    f"{accuracy:.4f}"
+)
+
+
+# ------------------------------------------------------------
+# Classification Report
+# ------------------------------------------------------------
+
+print("\nClassification Report:\n")
+
+print(
+    classification_report(
+
+        y_test,
+
+        predicted_classes,
+
+        labels=np.arange(num_classes),
+
+        target_names=label_encoder.classes_,
+
+        zero_division=0
+    )
+)
+
+
+# ------------------------------------------------------------
+# Confusion Matrix
+# ------------------------------------------------------------
+
+print("\nConfusion Matrix:\n")
+
+cm = confusion_matrix(
+    y_test,
+    predicted_classes
+)
+
+print(cm)
+
+
+# ============================================================
+# SAVE FINE-TUNED MODEL
+# ============================================================
+
+print("\n" + "=" * 70)
+print("STEP 8 - SAVING MODEL")
+print("=" * 70)
+
+# Remove old directory if required before saving.
+# Make sure this does NOT contain anything important.
+
+if os.path.exists(OUTPUT_MODEL_PATH):
+
+    import shutil
+
+    shutil.rmtree(
+        OUTPUT_MODEL_PATH
+    )
+
+print(
+    "Saving fine-tuned model..."
+)
+
+classifier.save_to_preset(
+    OUTPUT_MODEL_PATH
+)
+
+print(
+    f"Model saved to:\n"
+    f"{OUTPUT_MODEL_PATH}"
+)
+
+
+# ============================================================
+# SAVE LABEL ENCODER
+# ============================================================
+
+print(
+    "\nSaving label encoder..."
+)
+
+with open(
+    LABEL_ENCODER_PATH,
+    "wb"
+) as file:
+
+    pickle.dump(
+        label_encoder,
+        file
+    )
+
+print(
+    f"Label encoder saved to:\n"
+    f"{LABEL_ENCODER_PATH}"
+)
+
+
+# ============================================================
+# TEST ONE NEW EMAIL
+# ============================================================
+
+print("\n" + "=" * 70)
+print("STEP 9 - TESTING NEW EMAIL")
+print("=" * 70)
+
+
+subject = "VPN access issue"
+
+body = """
+I am unable to connect to the corporate VPN.
+The connection was working yesterday but is
+not working today. Please help.
+"""
+
+
+email_text = (
+    "[SUBJECT] "
+    + subject
+    + " [BODY] "
+    + body
+)
+
+
+# Predict
+prediction = classifier.predict(
+    [email_text],
+    verbose=0
+)
+
+
+# Predicted class
+predicted_class = np.argmax(
+    prediction[0]
+)
+
+
+# Convert class ID back to actual GEMS label
+predicted_label = (
+    label_encoder.inverse_transform(
+        [predicted_class]
+    )[0]
+)
+
+
+# Calculate probability
+probabilities = keras.ops.softmax(
+    prediction[0]
+)
+
+probabilities = np.array(
+    probabilities
+)
+
+confidence = probabilities[
+    predicted_class
+]
+
+
+print(
+    "\nEmail:"
+)
+
+print(
+    email_text
+)
+
+print(
+    "\nPredicted Product Group:"
+)
+
+print(
+    predicted_label
+)
+
+print(
+    f"\nConfidence: "
+    f"{confidence:.4f}"
+)
+
+
+# ============================================================
+# TOP 5 PREDICTIONS
+# ============================================================
+
+print("\nTop 5 predictions:")
+
+top_indices = np.argsort(
+    probabilities
+)[::-1][:5]
+
+
+for index in top_indices:
+
+    label = (
+        label_encoder.inverse_transform(
+            [index]
+        )[0]
+    )
+
+    probability = probabilities[
+        index
+    ]
+
+    print(
+        f"{label:<30} "
+        f"{probability:.4f}"
+    )
+
+
+# ============================================================
+# COMPLETE
+# ============================================================
+
+print("\n" + "=" * 70)
+print("TRAINING COMPLETE")
+print("=" * 70)
