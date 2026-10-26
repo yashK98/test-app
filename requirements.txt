@@ -1,1 +1,45 @@
-https://learn.microsoft.com/api/credentials/share/en-us/YashwantKundathil-2955/34885E04F049A5F7?sharingId=2C3CC63D7A31ADB5
+
+"questions": {
+    "sentiment": {
+        "type": "choice",
+        "instructions": (
+            "Classify the overall sentiment expressed by the author "
+            "of this email. Evaluate the author's expressed emotion "
+            "toward the company, product, service, or situation. "
+            "Use the actual wording and context, not just keywords. "
+            "Do not infer anger or happiness from a question alone. "
+            "If the email contains both positive and negative "
+            "sentiment, classify the dominant expressed sentiment. "
+            "Use other_unclear when there is insufficient evidence "
+            "or none of the defined categories fits."
+        ),
+        "criteria": {
+            "happy": (
+                "Clearly positive sentiment, such as appreciation, "
+                "gratitude, satisfaction, praise, or positive feedback. "
+                "The author expresses a favourable experience or outcome."
+            ),
+            "neutral": (
+                "Primarily factual, informational, or transactional "
+                "communication with no clear positive or negative "
+                "emotion. Includes ordinary questions and requests "
+                "without expressed dissatisfaction."
+            ),
+            "angry": (
+                "Strong negative emotion, such as explicit anger, "
+                "hostility, aggressive complaints, accusations, or "
+                "forceful demands caused by a problem."
+            ),
+            "disappointed": (
+                "Negative sentiment showing dissatisfaction, concern, "
+                "regret, or unmet expectations, but without strong "
+                "anger or hostility. Includes polite complaints."
+            ),
+            "other_unclear": (
+                "Insufficient emotional evidence, ambiguous sentiment, "
+                "unrelated content, or no reliable fit with the "
+                "other categories."
+            )
+        }
+    }
+}
