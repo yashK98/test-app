@@ -1,45 +1,75 @@
+import asyncio
+import time
+from fastapi import FastAPI
 
-"questions": {
-    "sentiment": {
-        "type": "choice",
-        "instructions": (
-            "Classify the overall sentiment expressed by the author "
-            "of this email. Evaluate the author's expressed emotion "
-            "toward the company, product, service, or situation. "
-            "Use the actual wording and context, not just keywords. "
-            "Do not infer anger or happiness from a question alone. "
-            "If the email contains both positive and negative "
-            "sentiment, classify the dominant expressed sentiment. "
-            "Use other_unclear when there is insufficient evidence "
-            "or none of the defined categories fits."
-        ),
-        "criteria": {
-            "happy": (
-                "Clearly positive sentiment, such as appreciation, "
-                "gratitude, satisfaction, praise, or positive feedback. "
-                "The author expresses a favourable experience or outcome."
-            ),
-            "neutral": (
-                "Primarily factual, informational, or transactional "
-                "communication with no clear positive or negative "
-                "emotion. Includes ordinary questions and requests "
-                "without expressed dissatisfaction."
-            ),
-            "angry": (
-                "Strong negative emotion, such as explicit anger, "
-                "hostility, aggressive complaints, accusations, or "
-                "forceful demands caused by a problem."
-            ),
-            "disappointed": (
-                "Negative sentiment showing dissatisfaction, concern, "
-                "regret, or unmet expectations, but without strong "
-                "anger or hostility. Includes polite complaints."
-            ),
-            "other_unclear": (
-                "Insufficient emotional evidence, ambiguous sentiment, "
-                "unrelated content, or no reliable fit with the "
-                "other categories."
-            )
-        }
-    }
-}
+app = FastAPI()
+
+# Configuration parameters
+MAX_BATCH_SIZE = 5  # Max items processed in one go
+BATCH_TIMEOUT = 0.05  # Max wait time in seconds (50ms)
+
+# The shared queue holding (input_data, future) tuples
+request_queue = asyncio.Queue()
+
+
+async def batch_processor_loop():
+  """Background worker that continuously pulls items and processes them in batches."""
+  while True:
+    # 1. Wait for at least one request to arrive
+    first_item = await request_queue.get()
+    batch = [first_item]
+    start_time = time.time()
+
+    # 2. Collect more items up to MAX_BATCH_SIZE or until BATCH_TIMEOUT runs out
+    while len(batch) < MAX_BATCH_SIZE:
+      remaining_time = BATCH_TIMEOUT - (time.time() - start_time)
+      if remaining_time <= 0:
+        break
+      try:
+        item = await asyncio.wait_for(
+            request_queue.get(), timeout=remaining_time
+        )
+        batch.append(item)
+      except asyncio.TimeoutError:
+        break  # Timeout reached, process what we have so far
+
+    # 3. Extract inputs and their corresponding futures
+    inputs = [item[0] for item in batch]
+    futures = [item[1] for item in batch]
+
+    print(
+        f"--- Processing Batch of {len(inputs)} items ---"
+    )  # Watch this in your server logs!
+
+    # 4. Simulate batch processing (e.g., running model inference on a GPU)
+    await asyncio.sleep(0.01)
+    results = [f"Processed -> {text.upper()}" for text in inputs]
+
+    # 5. Send results back to each waiting request via its Future
+    for future, result in zip(futures, results):
+      if not future.done():
+        future.set_result(result)
+
+    # Acknowledge queue tasks are done
+    for _ in batch:
+      request_queue.task_done()
+
+
+@app.on_event("startup")
+async def startup_event():
+  # Start the background loop when the FastAPI server boots up
+  asyncio.create_task(batch_processor_loop())
+
+
+@app.post("/process")
+async def process_text(text: str):
+  # Create an individual Future for this specific request
+  loop = asyncio.get_running_loop()
+  future = loop.create_future()
+
+  # Put the text and its future into the queue
+  await request_queue.put((text, future))
+
+  # Pause this request until the background worker resolves the future
+  result = await future
+  return {"original": text, "batch_result": result}
