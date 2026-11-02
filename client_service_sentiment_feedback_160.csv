@@ -1,0 +1,161 @@
+﻿feedback_id,customer_feedback,sentiment
+FB001,Thank you for resolving my debit card issue so quickly. The service was excellent.,HAPPY
+FB002,The team handled my address update smoothly and kept me informed throughout.,HAPPY
+FB003,My cheque book request was completed earlier than expected. Very happy with the service.,HAPPY
+FB004,"The representative was polite, patient and explained every step clearly.",HAPPY
+FB005,My online banking access was restored within minutes. Great support.,HAPPY
+FB006,The issue with my account statement was fixed on the first call. Thank you.,HAPPY
+FB007,I appreciate the regular updates and the quick resolution of my service request.,HAPPY
+FB008,The agent took ownership of my complaint and followed through until it was resolved.,HAPPY
+FB009,My new card arrived on time and the activation instructions were easy to follow.,HAPPY
+FB010,The standing instruction was set up correctly. The whole process was hassle-free.,HAPPY
+FB011,The branch team was welcoming and helped me complete the request without delays.,HAPPY
+FB012,My contact details were updated immediately. Very efficient customer service.,HAPPY
+FB013,The relationship team explained the charges clearly and resolved my query.,HAPPY
+FB014,I received a callback exactly when promised. Excellent follow-up.,HAPPY
+FB015,The duplicate transaction was investigated and corrected quickly. I am satisfied.,HAPPY
+FB016,The mobile banking issue is fixed now. The support team was knowledgeable.,HAPPY
+FB017,My loan statement was shared promptly and the information was accurate.,HAPPY
+FB018,The team made the account closure process straightforward. Thank you for your help.,HAPPY
+FB019,My beneficiary addition request was completed without any trouble.,HAPPY
+FB020,The agent listened carefully and gave me the right solution straight away.,HAPPY
+FB021,I am pleased with how quickly the international transfer query was handled.,HAPPY
+FB022,The service request was completed within the promised timeline. Well done.,HAPPY
+FB023,The staff member was courteous and made the documentation process easy.,HAPPY
+FB024,My card limit change was processed successfully. Great experience.,HAPPY
+FB025,The team proactively informed me when the request was completed.,HAPPY
+FB026,The error in my personal details was corrected without repeated follow-ups.,HAPPY
+FB027,The support desk resolved my login issue and checked that everything worked.,HAPPY
+FB028,I appreciate the clear explanation of the dispute process and the timely update.,HAPPY
+FB029,My request for a tax certificate was handled efficiently.,HAPPY
+FB030,The team helped me understand the account requirements and completed the request.,HAPPY
+FB031,The replacement card was delivered safely and much sooner than I expected.,HAPPY
+FB032,The agent was empathetic and made a stressful issue easy to resolve.,HAPPY
+FB033,My cash withdrawal dispute was settled fairly. Thank you for the assistance.,HAPPY
+FB034,The service team coordinated with the branch and kept the process moving.,HAPPY
+FB035,The request was handled professionally from start to finish.,HAPPY
+FB036,I got a clear answer about my service charge and the correction was made promptly.,HAPPY
+FB037,The team resolved the issue without asking me to submit the same documents again.,HAPPY
+FB038,My account access is working again. I am very satisfied with the support.,HAPPY
+FB039,The callback and resolution were both completed as committed.,HAPPY
+FB040,The staff explained the next steps clearly and helped me finish the request.,HAPPY
+FB041,Excellent experience: my statement request was completed in one interaction.,HAPPY
+FB042,The team was responsive when I reported a failed payment and fixed it quickly.,HAPPY
+FB043,My account maintenance request was completed accurately. Much appreciated.,HAPPY
+FB044,The agent kept me updated and confirmed the final outcome.,HAPPY
+FB045,The branch appointment was arranged at a convenient time. Thank you.,HAPPY
+FB046,My service request was handled with care and resolved to my satisfaction.,HAPPY
+FB047,The team made it easy to update my registered mobile number.,HAPPY
+FB048,I received helpful guidance and the request was completed without complications.,HAPPY
+FB049,I submitted a request to update my mailing address. The change has been completed.,NEUTRAL
+FB050,My account statement request has been logged and the document was sent.,NEUTRAL
+FB051,The service team confirmed that my debit card replacement is being processed.,NEUTRAL
+FB052,I contacted support about a standing instruction and received the required information.,NEUTRAL
+FB053,My request to update my email address was completed today.,NEUTRAL
+FB054,The agent explained the documents needed to close the account.,NEUTRAL
+FB055,I received confirmation that the cheque book request has been submitted.,NEUTRAL
+FB056,The bank provided the status of my pending international transfer query.,NEUTRAL
+FB057,My online banking access was reset after the identity checks were completed.,NEUTRAL
+FB058,The representative shared the process for disputing a card transaction.,NEUTRAL
+FB059,I asked about the annual fee and received an explanation of the applicable charge.,NEUTRAL
+FB060,The team confirmed receipt of my loan interest certificate request.,NEUTRAL
+FB061,"My beneficiary update request is complete, as confirmed by the service desk.",NEUTRAL
+FB062,I was informed that the address change would take two working days.,NEUTRAL
+FB063,The service request was assigned a reference number for tracking.,NEUTRAL
+FB064,I contacted the branch to ask about the account closure procedure.,NEUTRAL
+FB065,The agent confirmed that my registered phone number has been updated.,NEUTRAL
+FB066,I received the requested information about my savings account.,NEUTRAL
+FB067,The team advised me that the card limit change had been processed.,NEUTRAL
+FB068,My request for a copy of the payment receipt was completed.,NEUTRAL
+FB069,The bank confirmed the next steps for updating my account details.,NEUTRAL
+FB070,I was given the expected timeline for the investigation of a failed payment.,NEUTRAL
+FB071,The service desk provided the current status of my chargeback request.,NEUTRAL
+FB072,My tax document request was received and is awaiting processing.,NEUTRAL
+FB073,The representative explained how to download a statement from online banking.,NEUTRAL
+FB074,The branch confirmed the appointment for submitting my documents.,NEUTRAL
+FB075,I received a notification that my replacement card had been dispatched.,NEUTRAL
+FB076,The agent shared the procedure for changing my account communication preferences.,NEUTRAL
+FB077,My request to add a joint account holder has been referred to the relevant team.,NEUTRAL
+FB078,The service desk confirmed that the duplicate payment case is under review.,NEUTRAL
+FB079,I was told that the international transfer query requires additional checks.,NEUTRAL
+FB080,The team provided the list of documents required for a profile update.,NEUTRAL
+FB081,My request was marked as completed and I received a confirmation message.,NEUTRAL
+FB082,I contacted support to check the status of my cheque deposit query.,NEUTRAL
+FB083,The representative explained the process for reactivating a dormant account.,NEUTRAL
+FB084,The bank confirmed receipt of my request to change the statement frequency.,NEUTRAL
+FB085,I received the reference number for my cash withdrawal dispute.,NEUTRAL
+FB086,The agent clarified the applicable timeline for a new debit card.,NEUTRAL
+FB087,My account service request has been forwarded to the operations team.,NEUTRAL
+FB088,The team confirmed that my contact information is now updated.,NEUTRAL
+FB089,I asked how to reset my mobile banking PIN and received the instructions.,NEUTRAL
+FB090,The branch provided the form required for an account maintenance request.,NEUTRAL
+FB091,I received an update that the service charge query is being reviewed.,NEUTRAL
+FB092,The representative confirmed the documents were received successfully.,NEUTRAL
+FB093,My request for a balance confirmation letter has been registered.,NEUTRAL
+FB094,The bank shared the current status of my loan account statement request.,NEUTRAL
+FB095,I was informed that the card transaction investigation is still in progress.,NEUTRAL
+FB096,The service desk explained how to track the request using its reference number.,NEUTRAL
+FB097,I had to contact support three times before anyone addressed my debit card issue.,DISAPPOINTED
+FB098,The address update took much longer than the timeline I was given.,DISAPPOINTED
+FB099,"I expected a callback yesterday, but nobody contacted me.",DISAPPOINTED
+FB100,"The agent was polite, but my online banking problem is still unresolved.",DISAPPOINTED
+FB101,I submitted all the documents and was asked to send them again. This is disappointing.,DISAPPOINTED
+FB102,My cheque book request is delayed and I have not received a clear explanation.,DISAPPOINTED
+FB103,The service team gave me conflicting information about the account closure process.,DISAPPOINTED
+FB104,I am disappointed that my complaint was marked resolved when the issue remains open.,DISAPPOINTED
+FB105,"The replacement card has not arrived, despite the delivery date passing.",DISAPPOINTED
+FB106,I spent a long time on the phone and still do not know the status of my transfer.,DISAPPOINTED
+FB107,The branch visit did not resolve my account maintenance request.,DISAPPOINTED
+FB108,"I was promised an update, but I had to chase the team for information.",DISAPPOINTED
+FB109,The charge correction is still pending after several follow-ups.,DISAPPOINTED
+FB110,The instructions for resetting my banking access were unclear and did not work.,DISAPPOINTED
+FB111,My beneficiary request has been pending for days without a proper update.,DISAPPOINTED
+FB112,The team transferred my call several times and I had to explain the issue repeatedly.,DISAPPOINTED
+FB113,I received the wrong statement and now need to raise another request.,DISAPPOINTED
+FB114,The process was more complicated than expected and the guidance was not helpful.,DISAPPOINTED
+FB115,"My failed payment case has not progressed, even though I supplied the reference number.",DISAPPOINTED
+FB116,I am unhappy with the delay in receiving my tax certificate.,DISAPPOINTED
+FB117,The agent could not explain why my standing instruction was not set up correctly.,DISAPPOINTED
+FB118,I was asked to visit the branch after being told the request could be completed online.,DISAPPOINTED
+FB119,The response did not address my question about the disputed transaction.,DISAPPOINTED
+FB120,My contact details still show the old number even after confirmation of the update.,DISAPPOINTED
+FB121,The service request was closed without checking whether the problem was fixed.,DISAPPOINTED
+FB122,I have received no meaningful update on my loan statement request.,DISAPPOINTED
+FB123,The team missed the agreed completion date and did not notify me.,DISAPPOINTED
+FB124,I had to repeat my identity verification because the earlier details were not recorded.,DISAPPOINTED
+FB125,The account closure request is taking too long and the status is unclear.,DISAPPOINTED
+FB126,I am not satisfied with the generic response I received from customer support.,DISAPPOINTED
+FB127,The mobile banking issue keeps recurring after the team said it was fixed.,DISAPPOINTED
+FB128,"The explanation of the service fee was incomplete, so I still have questions.",DISAPPOINTED
+FB129,My request was passed between teams and nobody took ownership.,DISAPPOINTED
+FB130,The promised card limit change has not appeared on my account yet.,DISAPPOINTED
+FB131,I was given an incorrect timeline for the investigation and had to follow up again.,DISAPPOINTED
+FB132,The document upload portal failed and support did not offer an alternative.,DISAPPOINTED
+FB133,The branch team could not locate the request I had already submitted online.,DISAPPOINTED
+FB134,I expected better communication while my cash withdrawal dispute was being reviewed.,DISAPPOINTED
+FB135,"The request was eventually completed, but the repeated delays were frustrating.",DISAPPOINTED
+FB136,I am disappointed that the same issue happened again after it was supposedly resolved.,DISAPPOINTED
+FB137,This is unacceptable. My account is blocked and nobody is taking responsibility.,ANGRY
+FB138,I have called repeatedly about the missing payment and still have no solution. Absolutely frustrating.,ANGRY
+FB139,Your team promised a callback and ignored it. I am extremely angry.,ANGRY
+FB140,I was charged twice and the bank has done nothing to return my money.,ANGRY
+FB141,Stop sending generic replies. I need my disputed transaction resolved immediately.,ANGRY
+FB142,This delay is ridiculous. I have submitted the same documents four times.,ANGRY
+FB143,My card was blocked without a clear reason and support has been useless.,ANGRY
+FB144,I am furious that my complaint was closed even though no one fixed the problem.,ANGRY
+FB145,Your staff kept transferring me and wasting my time. This service is appalling.,ANGRY
+FB146,I need an explanation now. My international transfer has been missing for days.,ANGRY
+FB147,This is the third time you have failed to update my details. Completely unacceptable.,ANGRY
+FB148,"I was assured the fee would be reversed, but it is still on my account.",ANGRY
+FB149,Nobody seems to care that I cannot access my own money. Resolve this urgently.,ANGRY
+FB150,I am fed up with chasing your team for a basic cheque book request.,ANGRY
+FB151,The branch and phone support keep blaming each other. Take ownership of this issue.,ANGRY
+FB152,My payment failed but the money was deducted. I want this corrected immediately.,ANGRY
+FB153,This is a terrible experience. I have received no useful response to my complaint.,ANGRY
+FB154,I have waited far beyond the promised date for my replacement card. This is outrageous.,ANGRY
+FB155,Do not mark this request complete again until the account access issue is actually fixed.,ANGRY
+FB156,I am extremely unhappy with the way my fraud-related query has been handled.,ANGRY
+FB157,Your repeated errors have caused me unnecessary trouble. I expect urgent action.,ANGRY
+FB158,I have explained this problem over and over. Why has nobody resolved it?,ANGRY
+FB159,The service charge is still being deducted after I raised the issue. This is unacceptable.,ANGRY
+FB160,I want this escalated immediately. The lack of updates and accountability is appalling.,ANGRY
