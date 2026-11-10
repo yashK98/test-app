@@ -1,33 +1,56 @@
-class ServiceRequestModel(nn.Module):
+def forward(
+    self,
+    input_ids,
+    attention_mask,
+    labels_product_group=None,
+    labels_subproduct_group=None,
+    labels_product_services=None,
+    labels_query_type=None,
+    labels_classification=None
+):
 
-    def __init__(self, model_name, num_classes):
+    outputs = self.encoder(
+        input_ids=input_ids,
+        attention_mask=attention_mask
+    )
 
-        super().__init__()
+    pooled_output = outputs.last_hidden_state[:, 0]
 
-        self.encoder = AutoModel.from_pretrained(model_name)
+    pooled_output = self.dropout(pooled_output)
 
-        hidden_size = self.encoder.config.hidden_size
+    product_group_logits = self.product_group_head(pooled_output)
 
-        self.dropout = nn.Dropout(0.2)
+    subproduct_group_logits = self.subproduct_group_head(pooled_output)
 
-        self.product_group_head = nn.Linear(
-            hidden_size, num_classes["product_group_encoded"]
+    product_services_logits = self.product_services_head(pooled_output)
+
+    query_type_logits = self.query_type_head(pooled_output)
+
+    classification_logits = self.classification_head(pooled_output)
+
+    loss = None
+
+    if labels_product_group is not None:
+
+        loss1 = self.loss_fn(product_group_logits, labels_product_group)
+
+        loss2 = self.loss_fn(subproduct_group_logits, labels_subproduct_group)
+
+        loss3 = self.loss_fn(product_services_logits, labels_product_services)
+
+        loss4 = self.loss_fn(query_type_logits, labels_query_type)
+
+        loss5 = self.loss_fn(classification_logits, labels_classification)
+
+        loss = loss1 + loss2 + loss3 + loss4 + loss5
+
+    return {
+        "loss": loss,
+        "logits": (
+            product_group_logits,
+            subproduct_group_logits,
+            product_services_logits,
+            query_type_logits,
+            classification_logits
         )
-
-        self.subproduct_group_head = nn.Linear(
-            hidden_size, num_classes["subproduct_group_encoded"]
-        )
-
-        self.product_services_head = nn.Linear(
-            hidden_size, num_classes["product_services_encoded"]
-        )
-
-        self.query_type_head = nn.Linear(
-            hidden_size, num_classes["query_type_encoded"]
-        )
-
-        self.classification_head = nn.Linear(
-            hidden_size, num_classes["classification_encoded"]
-        )
-
-        self.loss_fn = nn.CrossEntropyLoss()
+    }
