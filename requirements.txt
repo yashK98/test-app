@@ -1,0 +1,33 @@
+class ServiceRequestModel(nn.Module):
+
+    def __init__(self, model_name, num_classes):
+
+        super().__init__()
+
+        self.encoder = AutoModel.from_pretrained(model_name)
+
+        hidden_size = self.encoder.config.hidden_size
+
+        self.dropout = nn.Dropout(0.2)
+
+        self.product_group_head = nn.Linear(
+            hidden_size, num_classes["product_group_encoded"]
+        )
+
+        self.subproduct_group_head = nn.Linear(
+            hidden_size, num_classes["subproduct_group_encoded"]
+        )
+
+        self.product_services_head = nn.Linear(
+            hidden_size, num_classes["product_services_encoded"]
+        )
+
+        self.query_type_head = nn.Linear(
+            hidden_size, num_classes["query_type_encoded"]
+        )
+
+        self.classification_head = nn.Linear(
+            hidden_size, num_classes["classification_encoded"]
+        )
+
+        self.loss_fn = nn.CrossEntropyLoss()
