@@ -1,56 +1,121 @@
-def forward(
-    self,
-    input_ids,
-    attention_mask,
-    labels_product_group=None,
-    labels_subproduct_group=None,
-    labels_product_services=None,
-    labels_query_type=None,
-    labels_classification=None
-):
 
-    outputs = self.encoder(
-        input_ids=input_ids,
-        attention_mask=attention_mask
+# Generate predictions
+prediction_output = trainer.predict(test_dataset)
+
+# Trainer may wrap the model's logits tuple in another tuple.
+logits = prediction_output.predictions
+
+if len(logits) == 1 and isinstance(logits[0], (tuple, list)):
+    logits = logits[0]
+
+actual_labels = prediction_output.label_ids
+
+# Attribute names and corresponding output order
+attributes = [
+    "Product Group",
+    "Sub-product Group",
+    "Product & Services",
+    "Query Type",
+    "Classification"
+]
+
+# Store predictions for each attribute
+all_predictions = {}
+all_actual = {}
+
+print("\n" + "=" * 60)
+print("GEMS SERVICE REQUEST ATTRIBUTE EVALUATION")
+print("=" * 60)
+
+for i, attribute in enumerate(attributes):
+
+    # Get predictions for current classification head
+    predictions = np.argmax(logits[i], axis=-1)
+
+    # Get actual labels for current attribute
+    actual = actual_labels[i]
+
+    all_predictions[attribute] = predictions
+    all_actual[attribute] = actual
+
+    # Calculate metrics
+    print("\n" + "-" * 60)
+    print(f"ATTRIBUTE: {attribute}")
+    print("-" * 60)
+
+    print(
+        "Accuracy:",
+        accuracy_score(actual, predictions)
     )
 
-    pooled_output = outputs.last_hidden_state[:, 0]
+    print("\nClassification Report:")
 
-    pooled_output = self.dropout(pooled_output)
-
-    product_group_logits = self.product_group_head(pooled_output)
-
-    subproduct_group_logits = self.subproduct_group_head(pooled_output)
-
-    product_services_logits = self.product_services_head(pooled_output)
-
-    query_type_logits = self.query_type_head(pooled_output)
-
-    classification_logits = self.classification_head(pooled_output)
-
-    loss = None
-
-    if labels_product_group is not None:
-
-        loss1 = self.loss_fn(product_group_logits, labels_product_group)
-
-        loss2 = self.loss_fn(subproduct_group_logits, labels_subproduct_group)
-
-        loss3 = self.loss_fn(product_services_logits, labels_product_services)
-
-        loss4 = self.loss_fn(query_type_logits, labels_query_type)
-
-        loss5 = self.loss_fn(classification_logits, labels_classification)
-
-        loss = loss1 + loss2 + loss3 + loss4 + loss5
-
-    return {
-        "loss": loss,
-        "logits": (
-            product_group_logits,
-            subproduct_group_logits,
-            product_services_logits,
-            query_type_logits,
-            classification_logits
+    print(
+        classification_report(
+            actual,
+            predictions,
+            zero_division=0
         )
-    }
+    )
+
+    print("\nConfusion Matrix:")
+
+    print(
+        confusion_matrix(actual, predictions)
+    )
+
+
+# Overall exact match accuracy
+actual_matrix = np.column_stack([
+    all_actual[attr] for attr in attributes
+])
+
+prediction_matrix = np.column_stack([
+    all_predictions[attr] for attr in attributes
+])
+
+exact_match = np.all(
+    actual_matrix == prediction_matrix,
+    axis=1
+)
+
+print("\n" + "=" * 60)
+print("OVERALL EVALUATION")
+print("=" * 60)
+
+print(
+    "Exact Match Accuracy:",
+    exact_match.mean()
+)
+
+print(
+    "All five attributes correct:",
+    exact_match.sum(),
+    "/",
+    len(exact_match)
+)
+
+
+# Export predictions
+results = test_df.reset_index(drop=True).copy()
+
+for i, attribute in enumerate(attributes):
+
+    column = attribute.lower().replace(" ", "_")
+
+    results[f"{column}_actual"] = all_actual[attribute]
+
+    results[f"{column}_predicted"] = all_predictions[attribute]
+
+    results[f"{column}_correct"] = (
+        all_actual[attribute] == all_predictions[attribute]
+    )
+
+results["all_attributes_correct"] = exact_match
+
+results.to_csv(
+    "gems_service_request_predictions.csv",
+    index=False
+)
+
+print("\nPredictions exported successfully!")
