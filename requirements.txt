@@ -1,364 +1,39 @@
-import os
-import json
-import logging
-
-from sqlalchemy import (
-    create_engine,
-    text,
-    MetaData,
-    Table,
-    select,
-    JSON
-)
-
-# --------------------------------------------------
-# CONFIGURATION
-# --------------------------------------------------
-
-CCS_DB_URL = os.environ["CCS_DB_URL"]
-DATABRICKS_DB_URL = os.environ["DATABRICKS_DB_URL"]
-
-TARGET_SCHEMA = "gems"
-TARGET_TABLE = "complexity_analysis_bronze"
-
-BATCH_SIZE = 1000
-
-# Safety limit on raw source rows examined per class.
-# Increase only after reviewing source performance.
-MAX_SOURCE_ROWS_PER_CLASS = 250000
-
-TARGET_PER_CLASS = 50000
-
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s | %(levelname)s | %(message)s"
-)
-
-logger = logging.getLogger(__name__)
-
-
-# --------------------------------------------------
-# DATABASE CONNECTIONS
-# --------------------------------------------------
-
-source_engine = create_engine(
-    CCS_DB_URL,
-    pool_pre_ping=True,
-    pool_size=1,
-    max_overflow=0
-)
-
-target_engine = create_engine(
-    DATABRICKS_DB_URL,
-    pool_pre_ping=True
-)
-
-
-# --------------------------------------------------
-# SOURCE QUERY
-# --------------------------------------------------
-
-SOURCE_QUERY = text("""
-    SELECT
-        sr.case_id,
-        sr.business_function,
-        sr.subject AS email_subject,
-        sd.swoosh_request,
-        sr.isquickkill
-
-    FROM client_srvc.service_request sr
-
-    INNER JOIN client_srvc.squirro_data sd
-        ON sr.case_id = sd.case_id
-
-    WHERE
-        sr.status = 'Resolved-Completed'
-        AND sr.isquickkill = :quickkill
-        AND sd.swoosh_request IS NOT NULL
-        AND sd.swoosh_response IS NOT NULL
-        AND sr.business_function = 'CSG'
-
-    LIMIT :max_rows
-""")
-
-
-# --------------------------------------------------
-# BYTEA TO JSON CONVERSION
-# --------------------------------------------------
 
 def convert_to_json(value):
 
+    if value is None:
+        raise ValueError("Payload is NULL")
+
+    # PostgreSQL BYTEA can be returned as memoryview
     if isinstance(value, memoryview):
         value = value.tobytes()
 
+    # Convert BYTEA to string
     if isinstance(value, bytes):
-        value = value.decode("utf-8")
+        value = value.decode("ascii").strip()
 
     if isinstance(value, str):
-        return json.loads(value)
+
+        value = value.strip()
+
+        if not value:
+            raise ValueError("Empty payload")
+
+        # Decode Base64
+        decoded_bytes = base64.b64decode(
+            value,
+            validate=True
+        )
+
+        # Convert decoded bytes to UTF-8
+        decoded_string = decoded_bytes.decode("utf-8")
+
+        # Convert JSON string to Python object
+        return json.loads(decoded_string)
 
     if isinstance(value, (dict, list)):
         return value
 
     raise ValueError(
-        f"Unsupported swoosh_request type: {type(value)}"
+        f"Unsupported payload type: {type(value)}"
     )
-
-
-# --------------------------------------------------
-# LOAD DESTINATION TABLE METADATA
-# --------------------------------------------------
-
-metadata = MetaData()
-
-target_table = Table(
-    TARGET_TABLE,
-    metadata,
-    schema=TARGET_SCHEMA,
-    autoload_with=target_engine
-)
-
-required_columns = {
-    "case_id",
-    "business_function",
-    "email_subject",
-    "swoosh_request",
-    "isquickkill"
-}
-
-missing_columns = required_columns - set(target_table.c.keys())
-
-if missing_columns:
-    raise RuntimeError(
-        f"Missing destination columns: {missing_columns}"
-    )
-
-# If the destination column is JSON/JSONB, pass Python objects.
-# Otherwise, store serialized JSON in a STRING/TEXT column.
-json_column = target_table.c.swoosh_request
-
-DESTINATION_USES_JSON = isinstance(
-    json_column.type, JSON
-)
-
-
-# --------------------------------------------------
-# INSERT BATCH
-# --------------------------------------------------
-
-def insert_batch(batch):
-
-    if not batch:
-        return 0
-
-    case_ids = [record["case_id"] for record in batch]
-
-    # Avoid inserting records already present in destination.
-    with target_engine.begin() as conn:
-
-        existing_ids = set(
-            conn.execute(
-                select(target_table.c.case_id).where(
-                    target_table.c.case_id.in_(case_ids)
-                )
-            ).scalars().all()
-        )
-
-        new_records = [
-            record for record in batch
-            if record["case_id"] not in existing_ids
-        ]
-
-        if not new_records:
-            return 0
-
-        conn.execute(
-            target_table.insert(),
-            new_records
-        )
-
-    return len(new_records)
-
-
-# --------------------------------------------------
-# MIGRATE ONE CLASS
-# --------------------------------------------------
-
-def migrate_class(quickkill_value):
-
-    label = "TRUE" if quickkill_value else "FALSE"
-
-    logger.info("=" * 55)
-    logger.info("Starting migration: isquickkill = %s", label)
-
-    migrated = 0
-    raw_rows = 0
-    invalid_rows = 0
-    duplicate_rows = 0
-
-    # Track case IDs across all fetched batches.
-    seen_ids = set()
-
-    pending_batch = []
-
-    def flush_batch():
-
-        nonlocal migrated
-
-        inserted = insert_batch(pending_batch)
-
-        migrated += inserted
-
-        logger.info(
-            "%s | Inserted: %s | Total: %s / %s",
-            label,
-            inserted,
-            migrated,
-            TARGET_PER_CLASS
-        )
-
-        pending_batch.clear()
-
-    with source_engine.connect() as source_conn:
-
-        # Enable server-side streaming.
-        result = source_conn.execution_options(
-            stream_results=True,
-            max_row_buffer=BATCH_SIZE
-        ).execute(
-            SOURCE_QUERY,
-            {
-                "quickkill": quickkill_value,
-                "max_rows": MAX_SOURCE_ROWS_PER_CLASS
-            }
-        )
-
-        try:
-
-            while migrated < TARGET_PER_CLASS:
-
-                rows = result.fetchmany(BATCH_SIZE)
-
-                if not rows:
-                    break
-
-                for row in rows:
-
-                    raw_rows += 1
-
-                    record = dict(row._mapping)
-
-                    case_id = record["case_id"]
-
-                    # Deduplicate source records.
-                    if case_id in seen_ids:
-                        duplicate_rows += 1
-                        continue
-
-                    try:
-                        swoosh_json = convert_to_json(
-                            record["swoosh_request"]
-                        )
-
-                    except (ValueError, UnicodeDecodeError, json.JSONDecodeError) as exc:
-
-                        invalid_rows += 1
-
-                        logger.warning(
-                            "Skipping invalid JSON for case_id=%s: %s",
-                            case_id,
-                            exc
-                        )
-
-                        continue
-
-                    seen_ids.add(case_id)
-
-                    if not DESTINATION_USES_JSON:
-                        swoosh_json = json.dumps(
-                            swoosh_json,
-                            ensure_ascii=False
-                        )
-
-                    pending_batch.append({
-                        "case_id": case_id,
-                        "business_function": record["business_function"],
-                        "email_subject": record["email_subject"],
-                        "swoosh_request": swoosh_json,
-                        "isquickkill": quickkill_value
-                    })
-
-                    if len(pending_batch) >= BATCH_SIZE:
-
-                        flush_batch()
-
-                        if migrated >= TARGET_PER_CLASS:
-                            break
-
-            # Insert remaining records.
-            if pending_batch and migrated < TARGET_PER_CLASS:
-
-                remaining = TARGET_PER_CLASS - migrated
-
-                if len(pending_batch) > remaining:
-                    del pending_batch[remaining:]
-
-                flush_batch()
-
-        finally:
-            result.close()
-
-    logger.info("Migration completed for isquickkill = %s", label)
-    logger.info("Raw source rows: %s", raw_rows)
-    logger.info("Inserted records: %s", migrated)
-    logger.info("Duplicate source records: %s", duplicate_rows)
-    logger.info("Invalid JSON records: %s", invalid_rows)
-
-    if migrated < TARGET_PER_CLASS:
-
-        logger.warning(
-            "Target not reached for %s. Expected %s, migrated %s. "
-            "Check source availability and MAX_SOURCE_ROWS_PER_CLASS.",
-            label,
-            TARGET_PER_CLASS,
-            migrated
-        )
-
-    return migrated
-
-
-# --------------------------------------------------
-# MAIN EXECUTION
-# --------------------------------------------------
-
-if __name__ == "__main__":
-
-    try:
-
-        logger.info("Starting CCS → Databricks migration")
-
-        true_count = migrate_class(True)
-
-        false_count = migrate_class(False)
-
-        logger.info("=" * 55)
-        logger.info("MIGRATION SUMMARY")
-        logger.info("Quick Kill TRUE  : %s", true_count)
-        logger.info("Quick Kill FALSE : %s", false_count)
-        logger.info("Total migrated   : %s", true_count + false_count)
-
-        if true_count == TARGET_PER_CLASS and false_count == TARGET_PER_CLASS:
-            logger.info("SUCCESS: 100K records migrated successfully")
-        else:
-            logger.warning("Migration completed with fewer than 100K records")
-
-    except Exception:
-
-        logger.exception("Migration failed")
-
-        raise
-
-    finally:
-
-        source_engine.dispose()
-        target_engine.dispose()
