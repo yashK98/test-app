@@ -1,540 +1,70 @@
-
-import os
-import time
-import logging
-
-import pandas as pd
-
-from sqlalchemy import create_engine, text
-from sklearn.model_selection import train_test_split
-
-from email_header_cleanup import clean_email_subject
-from email_cleanup import email_cleanup_service
-
-
-# ============================================================
-# CONFIGURATION
-# ============================================================
-
-DATABASE_URL = os.getenv("DATABRICKS_DB_URL")
-
-SOURCE_SCHEMA = "gems"
-SOURCE_TABLE = "complexity_analysis_bronze"
-
-TRAIN_TABLE = "complexity_analysis_train"
-TEST_TABLE = "complexity_analysis_test"
-
-TARGET_TRUE = 30000
-TARGET_FALSE = 30000
-
-TRAIN_SIZE = 2 / 3
-RANDOM_STATE = 42
-
-INSERT_BATCH_SIZE = 2000
-
-
-# ============================================================
-# LOGGING
-# ============================================================
-
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s | %(levelname)s | %(message)s"
-)
-
-logger = logging.getLogger(__name__)
-
-
-# ============================================================
-# DATABASE CONNECTION
-# ============================================================
-
-if not DATABASE_URL:
-    raise RuntimeError(
-        "DATABRICKS_DB_URL environment variable is not configured"
-    )
-
-engine = create_engine(
-    DATABASE_URL,
-    pool_pre_ping=True,
-    pool_size=1,
-    max_overflow=0
-)
-
-
-# ============================================================
-# SOURCE QUERY
-# ============================================================
-
-SOURCE_QUERY = text("""
-    SELECT
-        case_id,
-        email_subject,
-        swoosh_request->'params'->'items'->0->>'body'
-            AS email_body,
-        isquickkill
-
-    FROM gems.complexity_analysis_bronze
-
-    WHERE isquickkill IS NOT NULL
-
-    ORDER BY case_id
-""")
-
-
-# ============================================================
-# EXTRACT SOURCE DATA
-# ============================================================
-
 def extract_data():
 
-    logger.info("Starting source data extraction")
+    logger.info("Starting batch-based source extraction")
 
     start = time.perf_counter()
 
-    with engine.connect() as conn:
+    batches = []
+    last_case_id = ""
+    batch_number = 0
+    total_records = 0
 
-        df = pd.read_sql_query(
-            SOURCE_QUERY,
-            conn
+    while True:
+
+        batch_start = time.perf_counter()
+
+        # A fresh physical connection for every batch
+        with source_engine.connect() as conn:
+
+            batch = pd.read_sql_query(
+                SOURCE_QUERY,
+                conn,
+                params={
+                    "last_case_id": last_case_id,
+                    "batch_size": BATCH_SIZE
+                }
+            )
+
+        # Connection is closed here
+
+        if batch.empty:
+            break
+
+        batch_number += 1
+        records = len(batch)
+
+        total_records += records
+
+        last_case_id = str(batch["case_id"].iloc[-1])
+
+        batches.append(batch)
+
+        elapsed = time.perf_counter() - batch_start
+
+        logger.info(
+            "Batch: %d | Records: %d | Total: %d | Time: %.2f sec",
+            batch_number,
+            records,
+            total_records,
+            elapsed
         )
 
-    elapsed = time.perf_counter() - start
+    if not batches:
+        return pd.DataFrame(
+            columns=[
+                "case_id",
+                "email_subject",
+                "email_body",
+                "isquickkill"
+            ]
+        )
+
+    df = pd.concat(batches, ignore_index=True)
 
     logger.info(
-        "Extraction completed | Records: %d | Time: %.2f sec",
+        "Extraction completed | Total: %d | Time: %.2f sec",
         len(df),
-        elapsed
+        time.perf_counter() - start
     )
 
     return df
-
-
-# ============================================================
-# VALIDATE SOURCE DATA
-# ============================================================
-
-def validate_source_data(df):
-
-    logger.info("Validating source data")
-
-    if df.empty:
-        raise ValueError("Source table returned no records")
-
-    if df["case_id"].isnull().any():
-        raise ValueError("Source contains NULL case_id values")
-
-    if df["case_id"].duplicated().any():
-        duplicate_count = df["case_id"].duplicated().sum()
-
-        raise ValueError(
-            f"Duplicate case_id detected: {duplicate_count}. "
-            "Resolve duplicates before splitting."
-        )
-
-    true_count = int((df["isquickkill"] == True).sum())
-    false_count = int((df["isquickkill"] == False).sum())
-
-    logger.info("TRUE records  : %d", true_count)
-    logger.info("FALSE records : %d", false_count)
-
-    if true_count != TARGET_TRUE:
-        raise ValueError(
-            f"Expected {TARGET_TRUE} TRUE records, "
-            f"found {true_count}"
-        )
-
-    if false_count != TARGET_FALSE:
-        raise ValueError(
-            f"Expected {TARGET_FALSE} FALSE records, "
-            f"found {false_count}"
-        )
-
-    logger.info("Source validation successful")
-
-
-# ============================================================
-# CLEAN EMAIL SUBJECTS
-# ============================================================
-
-def clean_subjects(df):
-
-    logger.info("Starting email subject cleanup")
-
-    start = time.perf_counter()
-
-    df["email_subject"] = (
-        df["email_subject"]
-        .fillna("")
-        .astype(str)
-        .map(clean_email_subject)
-    )
-
-    elapsed = time.perf_counter() - start
-
-    logger.info(
-        "Subject cleanup completed | Time: %.2f sec",
-        elapsed
-    )
-
-    return df
-
-
-# ============================================================
-# CLEAN EMAIL BODIES
-# ============================================================
-
-def clean_bodies(df):
-
-    logger.info("Starting email body cleanup")
-
-    start = time.perf_counter()
-
-    df["email_body"] = (
-        df["email_body"]
-        .fillna("")
-        .astype(str)
-        .map(email_cleanup_service)
-    )
-
-    elapsed = time.perf_counter() - start
-
-    logger.info(
-        "Body cleanup completed | Time: %.2f sec",
-        elapsed
-    )
-
-    return df
-
-
-# ============================================================
-# TRAIN / TEST SPLIT
-# ============================================================
-
-def split_dataset(df):
-
-    logger.info("Starting stratified train/test split")
-
-    start = time.perf_counter()
-
-    true_records = df[df["isquickkill"] == True].copy()
-
-    false_records = df[df["isquickkill"] == False].copy()
-
-    # TRUE class: 20K train + 10K test
-
-    true_train, true_test = train_test_split(
-        true_records,
-        train_size=TRAIN_SIZE,
-        random_state=RANDOM_STATE,
-        shuffle=True
-    )
-
-    # FALSE class: 20K train + 10K test
-
-    false_train, false_test = train_test_split(
-        false_records,
-        train_size=TRAIN_SIZE,
-        random_state=RANDOM_STATE,
-        shuffle=True
-    )
-
-    train_df = pd.concat(
-        [true_train, false_train],
-        ignore_index=True
-    )
-
-    test_df = pd.concat(
-        [true_test, false_test],
-        ignore_index=True
-    )
-
-    # Shuffle final datasets
-
-    train_df = train_df.sample(
-        frac=1,
-        random_state=RANDOM_STATE
-    ).reset_index(drop=True)
-
-    test_df = test_df.sample(
-        frac=1,
-        random_state=RANDOM_STATE
-    ).reset_index(drop=True)
-
-    # Keep only required columns
-
-    columns = [
-        "case_id",
-        "email_subject",
-        "email_body",
-        "isquickkill"
-    ]
-
-    train_df = train_df[columns]
-    test_df = test_df[columns]
-
-    elapsed = time.perf_counter() - start
-
-    logger.info(
-        "Train/test split completed | Time: %.2f sec",
-        elapsed
-    )
-
-    return train_df, test_df
-
-
-# ============================================================
-# VALIDATE TRAIN / TEST DATASETS
-# ============================================================
-
-def validate_split(train_df, test_df):
-
-    logger.info("Validating final datasets")
-
-    train_ids = set(train_df["case_id"])
-    test_ids = set(test_df["case_id"])
-
-    # Ensure no overlap
-
-    overlap = train_ids.intersection(test_ids)
-
-    if overlap:
-        raise ValueError(
-            f"Train/test overlap detected: {len(overlap)}"
-        )
-
-    # Validate exact record counts
-
-    assert len(train_df) == 40000
-    assert len(test_df) == 20000
-
-    # Validate class distribution
-
-    assert (train_df["isquickkill"] == True).sum() == 20000
-    assert (train_df["isquickkill"] == False).sum() == 20000
-
-    assert (test_df["isquickkill"] == True).sum() == 10000
-    assert (test_df["isquickkill"] == False).sum() == 10000
-
-    logger.info("TRAIN DATASET")
-    logger.info(
-        "TRUE: %d | FALSE: %d",
-        (train_df["isquickkill"] == True).sum(),
-        (train_df["isquickkill"] == False).sum()
-    )
-
-    logger.info("TEST DATASET")
-    logger.info(
-        "TRUE: %d | FALSE: %d",
-        (test_df["isquickkill"] == True).sum(),
-        (test_df["isquickkill"] == False).sum()
-    )
-
-    logger.info("Train/test overlap: ZERO")
-    logger.info("Dataset validation successful")
-
-
-# ============================================================
-# CREATE DESTINATION TABLES
-# ============================================================
-
-def create_tables():
-
-    logger.info("Creating destination tables if required")
-
-    with engine.begin() as conn:
-
-        conn.execute(text("""
-            CREATE TABLE IF NOT EXISTS gems.complexity_analysis_train (
-                case_id TEXT PRIMARY KEY,
-                email_subject TEXT,
-                email_body TEXT,
-                isquickkill BOOLEAN
-            )
-        """))
-
-        conn.execute(text("""
-            CREATE TABLE IF NOT EXISTS gems.complexity_analysis_test (
-                case_id TEXT PRIMARY KEY,
-                email_subject TEXT,
-                email_body TEXT,
-                isquickkill BOOLEAN
-            )
-        """))
-
-    logger.info("Destination tables ready")
-
-
-# ============================================================
-# INSERT DATA
-# ============================================================
-
-def insert_datasets(train_df, test_df):
-
-    logger.info("Starting destination insertion")
-
-    start = time.perf_counter()
-
-    # Replace previous contents atomically.
-    # Both tables are committed together.
-
-    with engine.begin() as conn:
-
-        conn.execute(text("""
-            DELETE FROM gems.complexity_analysis_train
-        """))
-
-        conn.execute(text("""
-            DELETE FROM gems.complexity_analysis_test
-        """))
-
-        train_df.to_sql(
-            name=TRAIN_TABLE,
-            schema=SOURCE_SCHEMA,
-            con=conn,
-            if_exists="append",
-            index=False,
-            chunksize=INSERT_BATCH_SIZE,
-            method="multi"
-        )
-
-        logger.info("Training records inserted: %d", len(train_df))
-
-        test_df.to_sql(
-            name=TEST_TABLE,
-            schema=SOURCE_SCHEMA,
-            con=conn,
-            if_exists="append",
-            index=False,
-            chunksize=INSERT_BATCH_SIZE,
-            method="multi"
-        )
-
-        logger.info("Testing records inserted: %d", len(test_df))
-
-    elapsed = time.perf_counter() - start
-
-    logger.info(
-        "Destination insertion completed | Time: %.2f sec",
-        elapsed
-    )
-
-
-# ============================================================
-# VERIFY DATABASE RECORDS
-# ============================================================
-
-def verify_database():
-
-    logger.info("Verifying destination database tables")
-
-    with engine.connect() as conn:
-
-        train_count = conn.execute(text("""
-            SELECT
-                COUNT(*)
-            FROM gems.complexity_analysis_train
-        """)).scalar_one()
-
-        test_count = conn.execute(text("""
-            SELECT
-                COUNT(*)
-            FROM gems.complexity_analysis_test
-        """)).scalar_one()
-
-        overlap_count = conn.execute(text("""
-            SELECT COUNT(*)
-            FROM gems.complexity_analysis_train tr
-            INNER JOIN gems.complexity_analysis_test te
-                ON tr.case_id = te.case_id
-        """)).scalar_one()
-
-        logger.info("Database train records: %d", train_count)
-        logger.info("Database test records : %d", test_count)
-        logger.info("Database overlap      : %d", overlap_count)
-
-        if train_count != 40000:
-            raise RuntimeError("Training table count mismatch")
-
-        if test_count != 20000:
-            raise RuntimeError("Testing table count mismatch")
-
-        if overlap_count != 0:
-            raise RuntimeError("Database overlap detected")
-
-    logger.info("Database verification successful")
-
-
-# ============================================================
-# MAIN
-# ============================================================
-
-def main():
-
-    overall_start = time.perf_counter()
-
-    try:
-
-        logger.info("=" * 65)
-        logger.info("STARTING TRAIN / TEST DATA PREPARATION")
-        logger.info("=" * 65)
-
-        # 1. Extract
-
-        df = extract_data()
-
-        # 2. Validate
-
-        validate_source_data(df)
-
-        # 3. Clean subjects
-
-        df = clean_subjects(df)
-
-        # 4. Clean bodies
-
-        df = clean_bodies(df)
-
-        # 5. Split
-
-        train_df, test_df = split_dataset(df)
-
-        # 6. Validate split
-
-        validate_split(train_df, test_df)
-
-        # 7. Create destination tables
-
-        create_tables()
-
-        # 8. Insert
-
-        insert_datasets(train_df, test_df)
-
-        # 9. Verify
-
-        verify_database()
-
-        total_time = time.perf_counter() - overall_start
-
-        logger.info("=" * 65)
-        logger.info("TRAIN / TEST PREPARATION COMPLETED")
-        logger.info("Training records : 40,000")
-        logger.info("Testing records  : 20,000")
-        logger.info("Total records    : 60,000")
-        logger.info("Total time       : %.2f seconds", total_time)
-        logger.info("=" * 65)
-
-    except Exception:
-
-        logger.exception("DATA PREPARATION FAILED")
-
-        raise
-
-    finally:
-
-        engine.dispose()
-
-
-if __name__ == "__main__":
-    main()
