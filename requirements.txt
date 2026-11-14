@@ -1,62 +1,345 @@
 
-import os
+import numpy as np
 import pandas as pd
+import torch
+import torch.nn as nn
+
+from datasets import Dataset
+from sklearn.model_selection import train_test_split
+from sklearn.metrics import accuracy_score, f1_score, classification_report
 
 from sqlalchemy import create_engine, text
-from email_cleanup import email_cleanup_service
 
-# Database connection
-engine = create_engine(
-    os.getenv("DATABASE_URL"),
-    pool_pre_ping=True
+from transformers import (
+    AutoTokenizer,
+    AutoModel,
+    Trainer,
+    TrainingArguments,
+    default_data_collator
 )
 
-TABLES = [
-    "complexity_analysis_train",
-    "complexity_analysis_test"
-]
+from transformers.modeling_outputs import SequenceClassifierOutput
 
-def update_email_bodies():
+from training_constants import (
+    COMPLEXITY_ANALYSIS_QUERY,
+    COMPLEXITY_ANALYSIS_DB_URL
+)
 
-    for table in TABLES:
 
-        print(f"\nProcessing {table}...")
+# ==================================================
+# 1. DATABASE
+# ==================================================
 
-        # Read existing email bodies
-        query = text(f"""
-            SELECT case_id, email_body
-            FROM gems.{table}
-            WHERE email_body IS NOT NULL
-        """)
+engine = create_engine(COMPLEXITY_ANALYSIS_DB_URL)
 
-        df = pd.read_sql_query(query, engine)
+dataset = pd.read_sql_query(
+    sql=text(COMPLEXITY_ANALYSIS_QUERY),
+    con=engine
+)
 
-        if df.empty:
-            print("No records found.")
-            continue
+engine.dispose()
 
-        # Apply existing cleanup service
-        df["email_body"] = df["email_body"].apply(
-            email_cleanup_service
+dataset["email_subject"] = dataset["email_subject"].fillna("").astype(str)
+dataset["email_body"] = dataset["email_body"].fillna("").astype(str)
+
+dataset = dataset.dropna(subset=["isquickkill_encoded"])
+
+dataset["isquickkill_encoded"] = dataset[
+    "isquickkill_encoded"
+].astype(int)
+
+print("Total records:", len(dataset))
+print(dataset["isquickkill_encoded"].value_counts())
+
+
+# ==================================================
+# 2. TRAIN / TEST SPLIT
+# ==================================================
+
+train_df, test_df = train_test_split(
+    dataset,
+    test_size=0.2,
+    random_state=42,
+    stratify=dataset["isquickkill_encoded"]
+)
+
+print("Training records:", len(train_df))
+print("Testing records:", len(test_df))
+
+
+# ==================================================
+# 3. TOKENIZER
+# ==================================================
+
+model_name = (
+    r"C:\Users\1626752\ai-coe\GEMS\data-preprocessing"
+    r"\model-training\local-distilbert"
+)
+
+tokenizer = AutoTokenizer.from_pretrained(model_name)
+
+
+def tokenize(data):
+
+    subject_tokens = tokenizer(
+        data["email_subject"],
+        truncation=True,
+        padding="max_length",
+        max_length=70
+    )
+
+    body_tokens = tokenizer(
+        data["email_body"],
+        truncation=True,
+        padding="max_length",
+        max_length=128
+    )
+
+    return {
+        "subject_input_ids": subject_tokens["input_ids"],
+        "subject_attention_mask": subject_tokens["attention_mask"],
+        "body_input_ids": body_tokens["input_ids"],
+        "body_attention_mask": body_tokens["attention_mask"]
+    }
+
+
+# ==================================================
+# 4. HUGGING FACE DATASETS
+# ==================================================
+
+def prepare_dataset(df):
+
+    hf_dataset = Dataset.from_pandas(
+        df[
+            [
+                "email_subject",
+                "email_body",
+                "isquickkill_encoded"
+            ]
+        ].reset_index(drop=True)
+    )
+
+    hf_dataset = hf_dataset.map(
+        tokenize,
+        batched=True,
+        remove_columns=["email_subject", "email_body"]
+    )
+
+    hf_dataset = hf_dataset.rename_column(
+        "isquickkill_encoded",
+        "labels"
+    )
+
+    hf_dataset.set_format("torch")
+
+    return hf_dataset
+
+
+train_dataset = prepare_dataset(train_df)
+test_dataset = prepare_dataset(test_df)
+
+
+# ==================================================
+# 5. TWO-INPUT DISTILBERT MODEL
+# ==================================================
+
+class TwoInputDistilBERT(nn.Module):
+
+    def __init__(self, model_name, num_labels=2):
+
+        super().__init__()
+
+        self.encoder = AutoModel.from_pretrained(model_name)
+
+        hidden_size = self.encoder.config.hidden_size
+
+        # Freeze pretrained DistilBERT
+        for param in self.encoder.parameters():
+            param.requires_grad = False
+
+        # Classification head
+        self.dropout = nn.Dropout(0.2)
+
+        self.classifier = nn.Linear(
+            hidden_size * 2,
+            num_labels
         )
 
-        # Prepare records for update
-        records = df.to_dict("records")
+    def forward(
+        self,
+        subject_input_ids,
+        subject_attention_mask,
+        body_input_ids,
+        body_attention_mask,
+        labels=None
+    ):
 
-        # Update only email_body
-        update_query = text(f"""
-            UPDATE gems.{table}
-            SET email_body = :email_body
-            WHERE case_id = :case_id
-        """)
+        # Subject encoding
+        subject_output = self.encoder(
+            input_ids=subject_input_ids,
+            attention_mask=subject_attention_mask
+        )
 
-        with engine.begin() as conn:
-            conn.execute(update_query, records)
+        # Body encoding
+        body_output = self.encoder(
+            input_ids=body_input_ids,
+            attention_mask=body_attention_mask
+        )
 
-        print(f"Updated {len(df)} records in {table}")
+        # CLS representations
+        subject_embedding = subject_output.last_hidden_state[:, 0, :]
+        body_embedding = body_output.last_hidden_state[:, 0, :]
 
-    print("\nEmail cleanup completed successfully.")
+        # Combine both representations
+        combined = torch.cat(
+            [subject_embedding, body_embedding],
+            dim=1
+        )
+
+        combined = self.dropout(combined)
+
+        logits = self.classifier(combined)
+
+        loss = None
+
+        if labels is not None:
+            loss = nn.CrossEntropyLoss()(
+                logits,
+                labels
+            )
+
+        return SequenceClassifierOutput(
+            loss=loss,
+            logits=logits
+        )
 
 
-if __name__ == "__main__":
-    update_email_bodies()
+model = TwoInputDistilBERT(
+    model_name=model_name,
+    num_labels=2
+)
+
+
+# ==================================================
+# 6. EVALUATION METRICS
+# ==================================================
+
+def compute_metrics(eval_pred):
+
+    predictions, labels = eval_pred
+
+    predictions = np.argmax(predictions, axis=1)
+
+    return {
+        "accuracy": accuracy_score(labels, predictions),
+        "f1": f1_score(labels, predictions, zero_division=0)
+    }
+
+
+# ==================================================
+# 7. TRAINING ARGUMENTS
+# ==================================================
+
+training_args = TrainingArguments(
+
+    output_dir="./complexity_analysis_output",
+
+    num_train_epochs=3,
+
+    per_device_train_batch_size=16,
+    per_device_eval_batch_size=16,
+
+    learning_rate=2e-5,
+
+    use_cpu=True,
+
+    eval_strategy="epoch",
+    save_strategy="epoch",
+
+    load_best_model_at_end=True,
+    metric_for_best_model="eval_loss",
+    greater_is_better=False,
+
+    logging_steps=100,
+
+    report_to="none"
+)
+
+
+# ==================================================
+# 8. TRAINER
+# ==================================================
+
+trainer = Trainer(
+
+    model=model,
+
+    args=training_args,
+
+    train_dataset=train_dataset,
+    eval_dataset=test_dataset,
+
+    data_collator=default_data_collator,
+
+    compute_metrics=compute_metrics
+)
+
+
+# ==================================================
+# 9. TRAINING
+# ==================================================
+
+print("\nStarting model training...\n")
+
+trainer.train()
+
+
+# ==================================================
+# 10. FINAL TEST EVALUATION
+# ==================================================
+
+print("\nFinal Test Evaluation:\n")
+
+results = trainer.evaluate(
+    eval_dataset=test_dataset
+)
+
+for metric, value in results.items():
+    print(f"{metric}: {value}")
+
+
+# ==================================================
+# 11. CLASSIFICATION REPORT
+# ==================================================
+
+predictions = trainer.predict(test_dataset)
+
+y_pred = np.argmax(
+    predictions.predictions,
+    axis=1
+)
+
+y_true = predictions.label_ids
+
+print("\nClassification Report:\n")
+
+print(
+    classification_report(
+        y_true,
+        y_pred,
+        target_names=["Not Quick Kill", "Quick Kill"],
+        zero_division=0
+    )
+)
+
+
+# ==================================================
+# 12. SAVE MODEL
+# ==================================================
+
+model_path = "./complexity_analysis_model"
+
+trainer.save_model(model_path)
+tokenizer.save_pretrained(model_path)
+
+print("\nModel saved successfully:", model_path)
