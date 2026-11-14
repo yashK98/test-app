@@ -1,22 +1,62 @@
-SECURITY_WARNING_PATTERNS = [
-    # External email warnings
-    r"(?im)^\s*ATTENTION:\s*This email came from an external source.*?(?=\nDear|\nHi|\nHello|\Z)",
 
-    # Phishing warnings
-    r"(?im)^\s*Always report suspicious emails.*$",
+import os
+import pandas as pd
 
-    # Attachment warnings
-    r"(?im)^\s*Do not open attachments from unknown senders.*$",
+from sqlalchemy import create_engine, text
+from email_cleanup import email_cleanup_service
 
-    # Confidentiality notices
-    r"(?im)^\s*This (?:email|message) (?:is|may be) confidential.*$",
+# Database connection
+engine = create_engine(
+    os.getenv("DATABASE_URL"),
+    pool_pre_ping=True
+)
 
-    # Accidental recipient notices
-    r"(?im)^\s*If you (?:have )?received this (?:email|message) in error.*$",
-
-    # Email encryption notices
-    r"(?im)^\s*This message is protected by Microsoft.*$",
+TABLES = [
+    "complexity_analysis_train",
+    "complexity_analysis_test"
 ]
 
+def update_email_bodies():
 
-r"(?is)\bATTENTION:\s*This email came from an external source\b.*?to protect the Bank and our clients\.?"
+    for table in TABLES:
+
+        print(f"\nProcessing {table}...")
+
+        # Read existing email bodies
+        query = text(f"""
+            SELECT case_id, email_body
+            FROM gems.{table}
+            WHERE email_body IS NOT NULL
+        """)
+
+        df = pd.read_sql_query(query, engine)
+
+        if df.empty:
+            print("No records found.")
+            continue
+
+        # Apply existing cleanup service
+        df["email_body"] = df["email_body"].apply(
+            email_cleanup_service
+        )
+
+        # Prepare records for update
+        records = df.to_dict("records")
+
+        # Update only email_body
+        update_query = text(f"""
+            UPDATE gems.{table}
+            SET email_body = :email_body
+            WHERE case_id = :case_id
+        """)
+
+        with engine.begin() as conn:
+            conn.execute(update_query, records)
+
+        print(f"Updated {len(df)} records in {table}")
+
+    print("\nEmail cleanup completed successfully.")
+
+
+if __name__ == "__main__":
+    update_email_bodies()
