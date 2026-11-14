@@ -17,3 +17,6 @@ SECURITY_WARNING_PATTERNS = [
     # Email encryption notices
     r"(?im)^\s*This message is protected by Microsoft.*$",
 ]
+
+
+r"(?is)\bATTENTION:\s*This email came from an external source\b.*?to protect the Bank and our clients\.?"
