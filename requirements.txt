@@ -1,70 +1,8 @@
-def extract_data():
-
-    logger.info("Starting batch-based source extraction")
-
-    start = time.perf_counter()
-
-    batches = []
-    last_case_id = ""
-    batch_number = 0
-    total_records = 0
-
-    while True:
-
-        batch_start = time.perf_counter()
-
-        # A fresh physical connection for every batch
-        with source_engine.connect() as conn:
-
-            batch = pd.read_sql_query(
-                SOURCE_QUERY,
-                conn,
-                params={
-                    "last_case_id": last_case_id,
-                    "batch_size": BATCH_SIZE
-                }
-            )
-
-        # Connection is closed here
-
-        if batch.empty:
-            break
-
-        batch_number += 1
-        records = len(batch)
-
-        total_records += records
-
-        last_case_id = str(batch["case_id"].iloc[-1])
-
-        batches.append(batch)
-
-        elapsed = time.perf_counter() - batch_start
-
-        logger.info(
-            "Batch: %d | Records: %d | Total: %d | Time: %.2f sec",
-            batch_number,
-            records,
-            total_records,
-            elapsed
-        )
-
-    if not batches:
-        return pd.DataFrame(
-            columns=[
-                "case_id",
-                "email_subject",
-                "email_body",
-                "isquickkill"
-            ]
-        )
-
-    df = pd.concat(batches, ignore_index=True)
-
-    logger.info(
-        "Extraction completed | Total: %d | Time: %.2f sec",
-        len(df),
-        time.perf_counter() - start
-    )
-
-    return df
+SIGNATURE_RE = re.compile(
+    r"(?i)^[ \t]*"
+    r"(?:(?:warm|best|kind|many)\s+)?"
+    r"(?:regards|thanks|thank you|"
+    r"thanks and regards|thanks & regards|"
+    r"sincerely|cheers)"
+    r"[,.!?]?[ \t]*$"
+)
