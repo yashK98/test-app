@@ -1,115 +1,176 @@
 
 import re
 
+from bs4 import BeautifulSoup
 
-# ============================================================
-# EMAIL THREAD BOUNDARY PATTERNS
-# ============================================================
-
-BOUNDARY_PATTERN = re.compile(
-    r"(?im)"
-    r"^[ \t]*[-_ ]*Original Message[-_ ]*[ \t]*$"
-    r"|^[ \t]*Begin forwarded message:[ \t]*$"
-    r"|^[ \t]*-{2,}[ \t]*Forwarded message[ \t]*-{2,}[ \t]*$"
-    r"|^[ \t]*On .{5,200}wrote:[ \t]*$"
-    r"|^[ \t]*[-_]{5,}[ \t]*$"
+from constants import (
+    PII_PATTERNS,
+    ACCOUNT_PATTERN,
+    HEADER_BLOCK_PATTERN,
+    BOUNDARY_PATTERN,
+    HEADER_PATTERN,
+    SIGNATURE_RE
 )
 
 
 # ============================================================
-# EMAIL HEADER PATTERNS
+# REMOVE EXPLICITLY ENCODED BLOCKS
 # ============================================================
 
-HEADER_BLOCK_PATTERN = re.compile(
-    r"(?im)^[ \t]*From:[ \t]?.{0,1500}?"
-    r"^[ \t]*Subject:[ \t]?.*(?:\n|$)"
-)
+def remove_encoded_blocks(text):
 
-
-HEADER_PATTERN = re.compile(
-    r"(?im)^[ \t]*(?:From|Sent|Date|To|Cc|Bcc|Subject):.*$"
-)
-
-
-# ============================================================
-# EMAIL SIGNATURE PATTERN
-# ============================================================
-
-SIGNATURE_RE = re.compile(
-    r"(?i)^[ \t]*"
-    r"(?:(?:warm|best|kind|many)\s+)?"
-    r"(?:regards|thanks|thank you|"
-    r"thanks and regards|thanks & regards|"
-    r"sincerely|cheers)"
-    r"[,.!?]?[ \t]*$"
-)
-
-
-# ============================================================
-# PII PATTERNS
-# ============================================================
-
-PII_PATTERNS = [
-
-    # Email addresses
-    (
-        re.compile(
-            r"\b[\w.+-]+@[\w-]+(?:\.[\w-]+)+\b"
-        ),
-        "[EMAIL]"
-    ),
-
-    # Credit / debit card numbers
-    (
-        re.compile(
-            r"\b(?:\d[ -]?){13,19}\b"
-        ),
-        "[CARD_NUMBER]"
-    ),
-
-    # Phone numbers
-    (
-        re.compile(
-            r"(?<!\w)\+?\d[\d\s().-]{8,15}\d(?!\w)"
-        ),
-        "[PHONE]"
-    ),
-
-    # IBAN
-    (
-        re.compile(
-            r"\b[A-Z]{2}\d{2}[A-Z0-9]{11,30}\b"
-        ),
-        "[IBAN]"
-    ),
-
-    # PAN
-    (
-        re.compile(
-            r"\b[A-Z]{5}\d{4}[A-Z]\b"
-        ),
-        "[PAN]"
-    ),
-
-    # Names in common email greetings
-    (
-        re.compile(
-            r"(?im)^(Hi|Hello|Dear|Hey)\s+"
-            r"[A-Z][\w.'-]*"
-            r"(?:\s+[A-Z][\w.'-]*){0,2}"
-            r"(?=\s*[,\n])"
-        ),
-        r"\1 [NAME]"
+    text = re.sub(
+        r"(?is)-----BEGIN [^-]+-----.*?-----END [^-]+-----",
+        "[ENCODED_DATA_REMOVED]",
+        text
     )
-]
+
+    return text
 
 
 # ============================================================
-# CONTEXTUAL ACCOUNT NUMBER DETECTION
+# MASK PII
 # ============================================================
 
-ACCOUNT_PATTERN = re.compile(
-    r"(?i)(\b(?:account|acct|a/c)"
-    r"(?:\s*(?:number|no\.?|#))?\s*[:#-]?\s*)"
-    r"([A-Z0-9-]{8,20})"
-)
+def mask_pii(text):
+
+    # Contextual account number masking
+    text = ACCOUNT_PATTERN.sub(
+        r"\1[ACCOUNT_NUMBER]",
+        text
+    )
+
+    # Apply remaining PII patterns
+    for pattern, replacement in PII_PATTERNS:
+        text = pattern.sub(replacement, text)
+
+    return text
+
+
+# ============================================================
+# REMOVE EXTERNAL EMAIL WARNINGS
+# ============================================================
+
+def remove_external_warning(text):
+
+    text = re.sub(
+        r"(?is)ATTENTION:\s*"
+        r"This email came from an external source\..*?"
+        r"our clients\.",
+        "",
+        text
+    )
+
+    return text
+
+
+# ============================================================
+# REMOVE EMAIL SIGNATURE
+# ============================================================
+
+def remove_signature(text):
+
+    lines = text.splitlines()
+
+    # Identify non-empty lines
+    non_empty = [
+        i for i, line in enumerate(lines)
+        if line.strip()
+    ]
+
+    # Inspect only the final 8 non-empty lines
+    for i in reversed(non_empty[-8:]):
+
+        if SIGNATURE_RE.fullmatch(lines[i].strip()):
+            return "\n".join(lines[:i])
+
+    return text
+
+
+# ============================================================
+# EMAIL CLEANUP SERVICE
+# ============================================================
+
+def email_cleanup_service(html):
+
+    if not html:
+        return ""
+
+    # 1. HTML -> BeautifulSoup
+    soup = BeautifulSoup(html, "lxml")
+
+    # 2. Remove non-text content
+    for tag in soup(
+        ["script", "style", "img", "svg", "head"]
+    ):
+        tag.decompose()
+
+    # 3. HTML -> Text
+    text = soup.get_text("\n")
+
+    # 4. Remove external email warning
+    text = remove_external_warning(text)
+
+    # 5. Split the chain into individual messages
+
+    # Strip quote markers while retaining quoted content
+    text = re.sub(
+        r"(?m)^[ \t]*>[ \t]?",
+        "",
+        text
+    )
+
+    # Identify email header blocks
+    text = HEADER_BLOCK_PATTERN.sub(
+        "\n<<MSG_BREAK>>\n",
+        text
+    )
+
+    # Identify forwarded/replied message boundaries
+    text = BOUNDARY_PATTERN.sub(
+        "\n<<MSG_BREAK>>\n",
+        text
+    )
+
+    # Remove individual email header lines
+    text = HEADER_PATTERN.sub("", text)
+
+    messages = text.split("<<MSG_BREAK>>")
+
+    # 6. Remove signature from each message
+    cleaned = []
+
+    for msg in messages:
+
+        msg = remove_signature(msg)
+
+        msg = msg.strip()
+
+        if msg:
+            cleaned.append(msg)
+
+    text = "\n".join(cleaned)
+
+    # 7. Remove internal banners
+    text = re.sub(
+        r"(?im)^[ \t]*(?:PUBLIC|INTERNAL|CONFIDENTIAL)[ \t]*$",
+        "",
+        text
+    )
+
+    # 8. Mask PII
+    text = mask_pii(text)
+
+    # 9. Remove explicitly encoded blocks
+    text = remove_encoded_blocks(text)
+
+    # 10. Clean whitespace while preserving paragraphs
+    lines = [
+        line.strip()
+        for line in text.splitlines()
+        if line.strip()
+    ]
+
+    text = "\n".join(lines)
+
+    return text.strip()
